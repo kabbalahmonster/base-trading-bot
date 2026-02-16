@@ -1,0 +1,44 @@
+{
+  "name": "base-grid-trading-bot",
+  "version": "1.0.0",
+  "description": "Grid trading bot for Base (Ethereum) using 0x Aggregator",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node --esm src/index.ts",
+    "setup": "npm run build && npm start",
+    "test": "echo \"Tests not yet implemented\" && exit 0"
+  },
+  "keywords": [
+    "trading-bot",
+    "grid-trading",
+    "base",
+    "ethereum",
+    "0x",
+    "defi"
+  ],
+  "author": "Cult of the Shell",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "chalk": "^5.3.0",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^16.3.0",
+    "inquirer": "^9.2.0",
+    "lowdb": "^7.0.0",
+    "viem": "^2.0.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/crypto-js": "^4.2.0",
+    "@types/inquirer": "^9.0.0",
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

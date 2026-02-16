@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build output
+dist/
+build/
+*.js
+*.js.map
+*.d.ts
+!jest.config.js
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Storage
+bots.json
+*.enc
+wallet_backup_*.txt
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary
+tmp/
+temp/
