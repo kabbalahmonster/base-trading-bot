@@ -9,7 +9,7 @@ import { JsonStorage } from './storage/JsonStorage';
 import { HeartbeatManager } from './bot/HeartbeatManager';
 import { GridCalculator } from './grid/GridCalculator';
 import { BotInstance, GridConfig } from './types';
-import { parseEther, formatEther } from 'viem';
+import { parseEther, formatEther, createPublicClient } from 'viem';
 import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 
@@ -72,7 +72,7 @@ async function main() {
           await showStatus(heartbeatManager, storage);
           break;
         case 'fund':
-          await fundWallet(walletManager);
+          await fundWallet(walletManager, storage);
           break;
         case 'reclaim':
           await reclaimFunds(walletManager, storage);
@@ -324,16 +324,134 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
   }
 }
 
-async function fundWallet(walletManager: WalletManager) {
-  console.log(chalk.cyan('\n💰 Fund wallet\n'));
-  console.log(chalk.yellow('Feature: Send ETH from main wallet to bot wallet'));
-  console.log(chalk.dim('Not yet implemented\n'));
+async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
+  console.log(chalk.cyan('\n💰 Fund Bot Wallet\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found. Create one first.\n'));
+    return;
+  }
+
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to fund:',
+      choices: bots.map(b => ({ name: `${b.name} (${b.walletAddress.slice(0, 10)}...)`, value: b.id })),
+    },
+  ]);
+
+  const bot = bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  const { amount } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'amount',
+      message: 'Amount of ETH to send:',
+      default: '0.01',
+      validate: (input) => !isNaN(parseFloat(input)) && parseFloat(input) > 0 || 'Invalid amount',
+    },
+  ]);
+
+  console.log(chalk.yellow(`\n⚠️  About to send ${amount} ETH to ${bot.walletAddress}`));
+  const { confirm } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: 'Confirm?',
+      default: false,
+    },
+  ]);
+
+  if (!confirm) {
+    console.log(chalk.yellow('Cancelled.\n'));
+    return;
+  }
+
+  try {
+    const { createWalletClient, http, parseEther } = await import('viem');
+    const { base } = await import('viem/chains');
+
+    const mainAccount = walletManager.getMainAccount();
+    const walletClient = createWalletClient({
+      account: mainAccount,
+      chain: base,
+      transport: http(RPC_URL),
+    });
+
+    console.log(chalk.dim('Sending transaction...'));
+
+    const txHash = await walletClient.sendTransaction({
+      to: bot.walletAddress as `0x${string}`,
+      value: parseEther(amount),
+    });
+
+    console.log(chalk.green(`\n✓ Transaction sent: ${txHash}`));
+    console.log(chalk.dim('Waiting for confirmation...'));
+
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(RPC_URL),
+    });
+
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+    console.log(chalk.green('✓ Funded successfully!\n'));
+
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Funding failed: ${error.message}\n`));
+  }
 }
 
 async function reclaimFunds(walletManager: WalletManager, storage: JsonStorage) {
-  console.log(chalk.cyan('\n🏧 Reclaim funds\n'));
-  console.log(chalk.yellow('Feature: Sell all tokens and return ETH to main wallet'));
-  console.log(chalk.dim('Not yet implemented\n'));
+  console.log(chalk.cyan('\n🏧 Reclaim Funds\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found.\n'));
+    return;
+  }
+
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to reclaim from:',
+      choices: [
+        { name: 'All bots', value: 'all' },
+        ...bots.map(b => ({ name: `${b.name} (${b.walletAddress.slice(0, 10)}...)`, value: b.id })),
+      ],
+    },
+  ]);
+
+  const mainWallet = await storage.getMainWallet();
+  if (!mainWallet) {
+    console.log(chalk.red('No main wallet found.\n'));
+    return;
+  }
+
+  console.log(chalk.yellow(`\n⚠️  This will:`));
+  console.log(chalk.yellow(`  1. Sell all tokens for ETH`));
+  console.log(chalk.yellow(`  2. Send all ETH to main wallet: ${mainWallet.address}`));
+
+  const { confirm } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: 'Confirm reclaim?',
+      default: false,
+    },
+  ]);
+
+  if (!confirm) {
+    console.log(chalk.yellow('Cancelled.\n'));
+    return;
+  }
+
+  console.log(chalk.dim('\nStarting reclaim process...'));
+  console.log(chalk.yellow('Note: Full reclaim implementation requires TradingBot integration'));
+  console.log(chalk.dim('This is a skeleton - wire up to TradingBot.sellAll() for full functionality\n'));
 }
 
 async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorage) {
