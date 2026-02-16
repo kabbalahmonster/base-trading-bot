@@ -144,4 +144,66 @@ export class ZeroXApi {
       actualProfit: profitPercent,
     };
   }
+
+  /**
+   * Get current token price in ETH per token
+   * Uses 0x price endpoint for consistent data
+   */
+  async getTokenPrice(tokenAddress: string, takerAddress: string): Promise<number | null> {
+    try {
+      // Use 0x price endpoint (doesn't require taker to have balance)
+      const response = await this.client.get('/swap/allowance-holder/price', {
+        params: {
+          chainId: CHAIN_ID,
+          sellToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // ETH
+          buyToken: tokenAddress,
+          sellAmount: '1000000000000000', // 0.001 ETH
+          taker: takerAddress,
+        },
+      });
+
+      if (response.data && response.data.buyAmount) {
+        // Calculate price: ETH amount / token amount
+        const ethWei = BigInt('1000000000000000'); // 0.001 ETH in wei
+        const tokensWei = BigInt(response.data.buyAmount);
+        
+        // Price = ETH / tokens
+        const price = Number(ethWei) / Number(tokensWei);
+        return price;
+      }
+      
+      return null;
+    } catch (error: any) {
+      // Silently fail - will use cached price
+      return null;
+    }
+  }
+
+  /**
+   * Get token price by selling (for tokens we hold)
+   */
+  async getTokenPriceBySell(tokenAddress: string, takerAddress: string): Promise<number | null> {
+    try {
+      const response = await this.client.get('/swap/allowance-holder/price', {
+        params: {
+          chainId: CHAIN_ID,
+          sellToken: tokenAddress,
+          buyToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // ETH
+          sellAmount: '1000000000000000000', // 1 token (assuming 18 decimals)
+          taker: takerAddress,
+        },
+      });
+
+      if (response.data && response.data.buyAmount) {
+        // Calculate price: ETH received / 1 token
+        const ethWei = BigInt(response.data.buyAmount);
+        const price = Number(ethWei) / 1e18;
+        return price;
+      }
+      
+      return null;
+    } catch (error: any) {
+      return null;
+    }
+  }
 }

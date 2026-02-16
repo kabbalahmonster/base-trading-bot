@@ -348,22 +348,30 @@ export class TradingBot {
   }
 
   /**
-   * Get current token price from Uniswap V3
+   * Get current token price from 0x API
    */
   private async getCurrentPrice(): Promise<number> {
     try {
-      // Try to get price from Uniswap V3 pool
-      // For now, use a simple method: check recent trades or use stored price
-      // In production, integrate with Chainlink or Uniswap V3 Quoter
+      // Try to get price from 0x API first
+      const price = await this.zeroXApi.getTokenPrice(
+        this.instance.tokenAddress,
+        this.instance.walletAddress
+      );
       
-      // Placeholder: return stored price or default
+      if (price && price > 0) {
+        // Update stored price
+        this.instance.currentPrice = price;
+        return price;
+      }
+      
+      // Fallback to stored price if available
       if (this.instance.currentPrice && this.instance.currentPrice > 0) {
         return this.instance.currentPrice;
       }
       
-      // Default starting price (should be fetched from actual DEX)
-      console.log('⚠ Using default price - integrate price oracle for accuracy');
-      return 0.000001;
+      // Last resort: ask user for initial price
+      console.log('⚠ Could not fetch price from 0x - using default');
+      return 0.000001; // Default fallback
     } catch (error: any) {
       console.error('Price fetch error:', error.message);
       return this.instance.currentPrice || 0.000001;
