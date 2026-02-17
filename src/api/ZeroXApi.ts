@@ -1,17 +1,17 @@
 // src/api/ZeroXApi.ts
 
 import axios, { AxiosInstance } from 'axios';
-import { ZeroXQuote, TradeResult } from '../types';
+import { ZeroXQuote } from '../types';
 
 const ZEROX_API_BASE = 'https://api.0x.org';
 const CHAIN_ID = 8453; // Base
 
 export class ZeroXApi {
   private client: AxiosInstance;
-  private apiKey?: string;
+  private _apiKey?: string;
 
   constructor(apiKey?: string) {
-    this.apiKey = apiKey;
+    this._apiKey = apiKey;
     
     this.client = axios.create({
       baseURL: ZEROX_API_BASE,
@@ -96,7 +96,6 @@ export class ZeroXApi {
       return { minEthRequired: '0', quote: null };
     }
 
-    const ethReceived = BigInt(quote.buyAmount);
     const gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
     const ethCost = BigInt(ethCostBasis);
 

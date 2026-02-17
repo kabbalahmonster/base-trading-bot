@@ -2,16 +2,13 @@
 
 import { WalletClient, formatEther, parseEther, createPublicClient, http, erc20Abi } from 'viem';
 import { base } from 'viem/chains';
-import { BotInstance, Position, TradeResult, GridConfig } from '../types';
+import { BotInstance, Position, TradeResult } from '../types';
 import { WalletManager } from '../wallet/WalletManager';
 import { ZeroXApi } from '../api/ZeroXApi';
 import { GridCalculator } from '../grid/GridCalculator';
 import { JsonStorage } from '../storage/JsonStorage';
 
-// Uniswap V3 Quoter for price discovery
-const UNISWAP_V3_QUOTER = '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a';
-const UNISWAP_V3_FACTORY = '0x33128a8fC17869897dcE68Ed026d694621f6FDfD';
-const WETH_BASE = '0x4200000000000000000000000000000000000006';
+// Price discovery via 0x API
 
 export class TradingBot {
   private instance: BotInstance;
