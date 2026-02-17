@@ -1,5 +1,14 @@
 // src/types/index.ts
 
+export type AlertLevel = 'all' | 'trades-only' | 'errors-only' | 'none';
+
+export interface NotificationConfig {
+  enabled: boolean;
+  alertLevel: AlertLevel;
+  // Per-bot override (if not set, uses global)
+  useGlobal: boolean;
+}
+
 export interface GridConfig {
   // Grid settings
   numPositions: number;        // Default: 24
@@ -35,10 +44,14 @@ export interface GridConfig {
 
 export interface Position {
   id: number;
-  buyPrice: number;           // Target buy price (ETH per token)
-  sellPrice: number;          // Target sell price (ETH per token)
-  stopLossPrice: number;      // Stop loss price
-  
+  // Range-based buy zone (covers entire chart continuously)
+  buyMin: number;             // Lower bound of buy range (ETH per token)
+  buyMax: number;             // Upper bound of buy range (ETH per token)
+  // Legacy support (buyPrice = buyMax for backward compatibility)
+  buyPrice: number;           // Kept for compatibility = buyMax
+  sellPrice: number;          // Target sell price = buyMax * (1 + profit%)
+  stopLossPrice: number;      // Stop loss = buyMin * (1 - stopLoss%)
+
   // State
   status: 'EMPTY' | 'HOLDING' | 'SOLD';
   
@@ -75,6 +88,9 @@ export interface BotInstance {
   totalSells: number;
   totalProfitEth: string;
   totalProfitUsd: number;
+  
+  // Notifications
+  notifications?: NotificationConfig;
   
   // State
   isRunning: boolean;

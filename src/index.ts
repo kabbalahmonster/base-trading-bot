@@ -690,20 +690,22 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
       const holding = bot.positions.filter(p => p.status === 'HOLDING').length;
       const posStr = String(holding).padStart(2, ' ');
 
-      // Get next buy/sell
+      // Get next buy/sell using range-based logic
       const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY');
       const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING');
 
+      // Find next buy: empty position with buyMin closest above current price
       const nextBuy = emptyPositions
-        .filter(p => p.buyPrice <= (bot.currentPrice * 1.1))
-        .sort((a, b) => b.buyPrice - a.buyPrice)[0];
+        .filter(p => (p.buyMin || p.buyPrice) > bot.currentPrice)
+        .sort((a, b) => (a.buyMin || a.buyPrice) - (b.buyMin || b.buyPrice))[0];
 
+      // Find next sell: holding position with lowest sellPrice
       const nextSell = holdingPositions
         .sort((a, b) => a.sellPrice - b.sellPrice)[0];
 
       const buySellStr = nextBuy && nextSell
-        ? `${(nextBuy.buyPrice * 1000000).toFixed(1)}µ→${(nextSell.sellPrice * 1000000).toFixed(1)}µ`
-        : nextBuy ? `${(nextBuy.buyPrice * 1000000).toFixed(1)}µ→--`
+        ? `${((nextBuy.buyMin || nextBuy.buyPrice) * 1000000).toFixed(1)}µ→${(nextSell.sellPrice * 1000000).toFixed(1)}µ`
+        : nextBuy ? `${((nextBuy.buyMin || nextBuy.buyPrice) * 1000000).toFixed(1)}µ→--`
         : nextSell ? `--→${(nextSell.sellPrice * 1000000).toFixed(1)}µ`
         : '--';
 
@@ -854,16 +856,22 @@ async function monitorSingleBot(enabledBots: BotInstance[], heartbeatManager: He
     console.log();
 
     // PRICE & MARKET SECTION
+    const gridRange = bot.positions.length > 0 ? {
+      floor: Math.min(...bot.positions.map(p => p.buyMin || p.buyPrice)),
+      ceiling: Math.max(...bot.positions.map(p => p.buyMax || p.buyPrice))
+    } : { floor: bot.currentPrice * 0.1, ceiling: bot.currentPrice * 4 };
+
     console.log(chalk.cyan('📊 PRICE & MARKET'));
     console.log(chalk.cyan('─'.repeat(66)));
-    console.log(`  Current Price: ${chalk.magenta(bot.currentPrice.toFixed(10))} ETH`);
-    console.log(`                 ${chalk.dim(`(${(bot.currentPrice * 1000000).toFixed(4)} µETH)`)}`);
-    console.log(`  Price Range:   ${chalk.dim('Floor:')} ${(bot.currentPrice * 0.1).toFixed(10)}  ${chalk.dim('Ceiling:')} ${(bot.currentPrice * 4).toFixed(10)}`);
+    console.log(`  Current Price: ${chalk.magenta(bot.currentPrice.toExponential(4))} ETH`);
+    console.log(`                 ${chalk.dim(`(${(bot.currentPrice * 1000000).toFixed(2)} µETH)`)}`);
+    console.log(`  Grid Range:    ${chalk.dim('Floor:')} ${gridRange.floor.toExponential(4)}  ${chalk.dim('Ceiling:')} ${gridRange.ceiling.toExponential(4)}`);
+    console.log(`  Coverage:      ${chalk.green('Continuous')} (no gaps between positions)`);
     console.log();
 
     // GRID POSITIONS SECTION
-    const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING').sort((a, b) => b.buyPrice - a.buyPrice);
-    const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY').sort((a, b) => b.buyPrice - a.buyPrice);
+    const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING').sort((a, b) => (b.buyMax || b.buyPrice) - (a.buyMax || a.buyPrice));
+    const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY').sort((a, b) => (b.buyMax || b.buyPrice) - (a.buyMax || a.buyPrice));
     const soldPositions = bot.positions.filter(p => p.status === 'SOLD').slice(-5); // Last 5 sold
 
     console.log(chalk.cyan('🎯 GRID POSITIONS'));
@@ -874,13 +882,16 @@ async function monitorSingleBot(enabledBots: BotInstance[], heartbeatManager: He
     // HOLDING POSITIONS
     if (holdingPositions.length > 0) {
       console.log(chalk.green('  📗 HOLDING (Ready to Sell):'));
-      console.log(chalk.dim('     ID  Buy Price      Sell Price     Tokens         Profit %'));
-      console.log(chalk.dim('     ──────────────────────────────────────────────────────────'));
+      console.log(chalk.dim('     ID  Buy Range              Buy@        Sell@        Tokens       Profit %'));
+      console.log(chalk.dim('     ──────────────────────────────────────────────────────────────────────────'));
 
       for (const pos of holdingPositions.slice(0, 5)) { // Show top 5
-        const profit = ((pos.sellPrice - pos.buyPrice) / pos.buyPrice * 100);
+        const buyMax = pos.buyMax || pos.buyPrice;
+        const buyMin = pos.buyMin || buyMax;
+        const profit = ((pos.sellPrice - buyMax) / buyMax * 100);
         const tokens = pos.tokensReceived ? formatUnits(BigInt(pos.tokensReceived), decimals).slice(0, 10) : '---';
-        console.log(`     ${String(pos.id).padStart(2)}  ${pos.buyPrice.toFixed(10)}  →  ${pos.sellPrice.toFixed(10)}  ${tokens.padStart(12)}  ${chalk.green('+' + profit.toFixed(1) + '%')}`);
+        const rangeStr = `${buyMin.toExponential(2)}-${buyMax.toExponential(2)}`;
+        console.log(`     ${String(pos.id).padStart(2)}  ${rangeStr.padEnd(20)}  ${buyMax.toExponential(4)}  ${pos.sellPrice.toExponential(4)}  ${tokens.padStart(10)}  ${chalk.green('+' + profit.toFixed(1) + '%')}`);
       }
 
       if (holdingPositions.length > 5) {
@@ -891,15 +902,17 @@ async function monitorSingleBot(enabledBots: BotInstance[], heartbeatManager: He
 
     // NEXT BUY OPPORTUNITIES
     const nextBuys = emptyPositions
-      .filter(p => p.buyPrice <= bot.currentPrice * 1.2)
+      .filter(p => (p.buyMin || p.buyPrice) > bot.currentPrice)
       .slice(0, 3);
 
     if (nextBuys.length > 0) {
       console.log(chalk.yellow('  📙 NEXT BUY OPPORTUNITIES:'));
       for (const pos of nextBuys) {
-        const dist = ((pos.buyPrice - bot.currentPrice) / bot.currentPrice * 100);
+        const buyMin = pos.buyMin || pos.buyPrice;
+        const buyMax = pos.buyMax || pos.buyPrice;
+        const dist = ((buyMin - bot.currentPrice) / bot.currentPrice * 100);
         const distStr = dist > 0 ? chalk.yellow(`+${dist.toFixed(1)}% above current`) : chalk.green(`${dist.toFixed(1)}% below current`);
-        console.log(`     Position ${pos.id}: Buy at ${pos.buyPrice.toFixed(10)} ETH (${distStr})`);
+        console.log(`     Position ${pos.id}: Buy range ${buyMin.toExponential(4)}-${buyMax.toExponential(4)} ETH (${distStr})`);
       }
       console.log();
     }

@@ -4,20 +4,21 @@ import { Position, GridConfig } from '../types/index.js';
 
 export class GridCalculator {
   /**
-   * Generate grid positions based on config and current price
+   * Generate grid positions with continuous buy ranges
+   * Each position covers a range from buyMin to buyMax
+   * Ranges are continuous: position[i].buyMax = position[i+1].buyMin
    */
   static generateGrid(
     currentPrice: number,
     config: GridConfig
   ): Position[] {
     const positions: Position[] = [];
-    
+
     // Determine floor and ceiling
     let floorPrice: number;
     let ceilingPrice: number;
-    
+
     if (config.floorPrice && config.ceilingPrice) {
-      // Use manually set values
       floorPrice = config.floorPrice;
       ceilingPrice = config.ceilingPrice;
     } else {
@@ -26,23 +27,31 @@ export class GridCalculator {
       ceilingPrice = currentPrice * 4;  // 4x current
     }
 
-    // Generate linear grid
-    const priceStep = (ceilingPrice - floorPrice) / (config.numPositions - 1);
+    // Calculate total range
+    const totalRange = ceilingPrice - floorPrice;
 
+    // Generate positions with continuous ranges
     for (let i = 0; i < config.numPositions; i++) {
-      const buyPrice = floorPrice + (priceStep * i);
-      
-      // Calculate sell price based on take profit %
-      const sellPrice = buyPrice * (1 + config.takeProfitPercent / 100);
-      
-      // Calculate stop loss price if enabled
+      // Calculate position's share of the range
+      const rangeStart = floorPrice + (totalRange * i) / config.numPositions;
+      const rangeEnd = floorPrice + (totalRange * (i + 1)) / config.numPositions;
+
+      const buyMin = rangeStart;
+      const buyMax = rangeEnd;
+
+      // Sell price is based on buyMax for minimum guaranteed profit
+      const sellPrice = buyMax * (1 + config.takeProfitPercent / 100);
+
+      // Stop loss is based on buyMin
       const stopLossPrice = config.stopLossEnabled
-        ? buyPrice * (1 - config.stopLossPercent / 100)
+        ? buyMin * (1 - config.stopLossPercent / 100)
         : 0;
 
       positions.push({
         id: i,
-        buyPrice,
+        buyMin,
+        buyMax,
+        buyPrice: buyMax, // Legacy compatibility
         sellPrice,
         stopLossPrice,
         status: 'EMPTY',
@@ -54,20 +63,20 @@ export class GridCalculator {
 
   /**
    * Find position that should buy at current price
+   * Price must be within the position's buy range [buyMin, buyMax]
    */
   static findBuyPosition(
     positions: Position[],
-    currentPrice: number,
-    tolerance: number = 0.01 // 1% tolerance
+    currentPrice: number
   ): Position | null {
     for (const position of positions) {
       if (position.status !== 'EMPTY') continue;
 
-      // Check if price is within tolerance of buy price
-      const lowerBound = position.buyPrice * (1 - tolerance);
-      const upperBound = position.buyPrice * (1 + tolerance);
+      // Check if price is within the buy range [buyMin, buyMax]
+      // Allow small buffer at boundaries for floating point precision
+      const buffer = (position.buyMax - position.buyMin) * 0.001;
 
-      if (currentPrice >= lowerBound && currentPrice <= upperBound) {
+      if (currentPrice >= position.buyMin - buffer && currentPrice <= position.buyMax + buffer) {
         return position;
       }
     }
@@ -75,30 +84,58 @@ export class GridCalculator {
   }
 
   /**
-   * Find positions that should sell at current price
+   * Find all positions that should sell at current price
+   * Position sells when price reaches or exceeds sellPrice
    */
   static findSellPositions(
     positions: Position[],
-    currentPrice: number,
-    tolerance: number = 0.01
+    currentPrice: number
   ): Position[] {
     const sellPositions: Position[] = [];
 
     for (const position of positions) {
       if (position.status !== 'HOLDING') continue;
 
-      // Check if price reached sell target
-      if (currentPrice >= position.sellPrice * (1 - tolerance)) {
+      // Sell when price reaches target (based on buyMax)
+      if (currentPrice >= position.sellPrice) {
         sellPositions.push(position);
+        continue;
       }
 
-      // Check stop loss if enabled
-      if (position.stopLossPrice > 0 && currentPrice <= position.stopLossPrice * (1 + tolerance)) {
+      // Stop loss check (based on buyMin)
+      if (position.stopLossPrice > 0 && currentPrice <= position.stopLossPrice) {
         sellPositions.push(position);
       }
     }
 
     return sellPositions;
+  }
+
+  /**
+   * Find next buy opportunity (closest empty position above current price)
+   */
+  static findNextBuyOpportunity(
+    positions: Position[],
+    currentPrice: number
+  ): Position | null {
+    const emptyPositions = positions
+      .filter(p => p.status === 'EMPTY' && p.buyMin > currentPrice)
+      .sort((a, b) => a.buyMin - b.buyMin);
+
+    return emptyPositions[0] || null;
+  }
+
+  /**
+   * Find next sell opportunity (lowest sell price among holding positions)
+   */
+  static findNextSellOpportunity(
+    positions: Position[]
+  ): Position | null {
+    const holdingPositions = positions
+      .filter(p => p.status === 'HOLDING')
+      .sort((a, b) => a.sellPrice - b.sellPrice);
+
+    return holdingPositions[0] || null;
   }
 
   /**
@@ -130,6 +167,13 @@ export class GridCalculator {
   }
 
   /**
+   * Format price range for display
+   */
+  static formatPriceRange(min: number, max: number): string {
+    return `${this.formatPrice(min)} - ${this.formatPrice(max)}`;
+  }
+
+  /**
    * Calculate grid statistics
    */
   static calculateGridStats(positions: Position[]) {
@@ -146,6 +190,42 @@ export class GridCalculator {
       empty: empty.length,
       avgProfit: sold.length > 0 ? totalProfit / sold.length : 0,
       totalProfitEth: sold.reduce((sum, p) => sum + BigInt(p.profitEth || '0'), BigInt(0)).toString(),
+    };
+  }
+
+  /**
+   * Validate that grid has continuous coverage (no gaps)
+   */
+  static validateContinuousCoverage(positions: Position[]): boolean {
+    if (positions.length < 2) return true;
+
+    // Sort by buyMin
+    const sorted = [...positions].sort((a, b) => a.buyMin - b.buyMin);
+
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const current = sorted[i];
+      const next = sorted[i + 1];
+
+      // Check for gaps (allow small floating point tolerance)
+      const tolerance = (current.buyMax - current.buyMin) * 0.001;
+      if (Math.abs(current.buyMax - next.buyMin) > tolerance) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Get the price range covered by the grid
+   */
+  static getGridRange(positions: Position[]): { floor: number; ceiling: number } | null {
+    if (positions.length === 0) return null;
+
+    const sorted = [...positions].sort((a, b) => a.buyMin - b.buyMin);
+    return {
+      floor: sorted[0].buyMin,
+      ceiling: sorted[sorted.length - 1].buyMax,
     };
   }
 }
