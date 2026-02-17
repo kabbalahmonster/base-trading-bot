@@ -668,6 +668,34 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
     return;
   }
 
+  // Initialize wallet manager with password
+  const mainWallet = await storage.getMainWallet();
+  if (!mainWallet) {
+    console.log(chalk.red('No main wallet found.\n'));
+    return;
+  }
+
+  const { password } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Enter master password:',
+      mask: '*',
+    },
+  ]);
+
+  try {
+    await walletManager.initialize(password);
+    walletManager.importData({ 
+      mainWallet, 
+      walletDictionary: await storage.getWalletDictionary(),
+      primaryWalletId: await storage.getPrimaryWalletId()
+    });
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
+    return;
+  }
+
   const { botId } = await inquirer.prompt([
     {
       type: 'list',
