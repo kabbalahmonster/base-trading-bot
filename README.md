@@ -80,6 +80,30 @@ Sell at buyMax × 1.08 (8% profit guaranteed)
 Stop loss at buyMin × 0.90 (10% protection)
 ```
 
+### 👁️ Daemon Mode - Persistent Operation
+
+**Run bots in background even when CLI exits:**
+- Start daemon to keep bots trading 24/7
+- Exit CLI without stopping bots
+- Reconnect anytime to check status
+- View daemon logs
+- Automatic restart on crash
+
+**Exit Options:**
+- **"Exit (bots keep running)"** - Detach CLI, bots continue trading
+- **"Exit and stop all bots"** - Graceful shutdown of all bots
+
+**Usage:**
+```bash
+npm start
+→ ▶️ Start bot(s)
+→ ⏻️ Exit (bots keep running)  # Bots run in background
+
+# Later...
+npm start
+→ 👁️ View daemon status  # Check running bots
+```
+
 ### 📺 Real-Time Monitoring Dashboard
 
 **All Bots Overview Mode:**
@@ -161,21 +185,27 @@ Stop loss at buyMin × 0.90 (10% protection)
 ### Main Menu Options
 
 ```
-🆕 Create new bot          - Set up new trading bot
-⚙️  Reconfigure bot         - Change settings, preserve balances
-▶️  Start bot(s)            - Begin trading
-⏹️  Stop bot(s)             - Pause all bots
-⏸️  Enable/Disable bot      - Toggle bot status
-📊 View status              - Dashboard overview
-📺 Monitor bots (live)      - Real-time monitoring (all or single)
-💰 Fund wallet              - Send ETH to bot wallet
-👛 View wallet balances     - Check all wallets
-📤 Send ETH to external     - Transfer ETH out
-🪙 Send tokens to external  - Transfer tokens
-🔧 Manage wallets          - Create/export/set primary
-🏧 Reclaim funds           - Withdraw from bots
-🗑️  Delete bot              - Remove bot configuration
-❌ Exit                    - Stop application
+🆕 Create new bot              - Set up new trading bot
+⚙️  Reconfigure bot             - Change settings, preserve balances
+▶️  Start bot(s)                - Begin trading
+⏹️  Stop bot(s)                 - Pause all bots
+⏸️  Enable/Disable bot          - Toggle bot status
+📊 View status                  - Dashboard overview
+📺 Monitor bots (live)          - Real-time monitoring (all or single)
+👁️  View daemon status          - Check/manage background daemon
+📈 View P&L Report             - Profit/loss analytics
+💰 Fund wallet                  - Send ETH to bot wallet
+👛 View wallet balances         - Check all wallets
+📤 Send ETH to external         - Transfer ETH out
+🪙 Send tokens to external      - Transfer tokens
+🔧 Manage wallets              - Create/export/set primary
+🔔 Configure Telegram          - Setup notifications
+🏧 Reclaim funds               - Withdraw from bots
+🔮 Oracle status               - Check price oracle health
+⚡ Toggle price validation      - Enable/disable oracle validation
+🗑️  Delete bot                  - Remove bot configuration
+⏻️  Exit (bots keep running)    - Detach CLI, bots continue
+⏹️  Exit and stop all bots      - Graceful shutdown
 ```
 
 ### Creating a Bot
@@ -370,6 +400,56 @@ All Bots:
   ✗ Bot-2: ○ Stopped [DISABLED] [0 holding]
   ✓ Bot-3: ● RUNNING [auto-buy] [5 holding]
 ```
+
+---
+
+## 👁️ Persistent Operation (Daemon Mode)
+
+### Run Bots 24/7
+
+The bot supports daemon mode for continuous operation:
+
+**Start Bots & Keep Running:**
+```bash
+npm start
+→ ▶️ Start bot(s)
+→ ⏻️ Exit (bots keep running)
+# Bots continue trading in background!
+```
+
+**Check Status Later:**
+```bash
+npm start
+→ 👁️ View daemon status
+
+👁️ Daemon Status
+
+✓ Daemon is RUNNING
+  PID: 12345
+  Uptime: 2:34:56
+
+Bots will continue trading even if you exit the CLI.
+
+? Daemon actions: (Use arrow keys)
+  📋 View recent logs
+  🔄 Restart daemon
+  ⏹️ Stop daemon
+  ⬅️ Back
+```
+
+**Graceful Shutdown:**
+```bash
+npm start
+→ ⏹️ Exit and stop all bots
+```
+
+### Why Use Daemon Mode?
+
+- **24/7 Trading** - Bots never stop, even if you close terminal
+- **Reconnect Anytime** - Check status, view logs, manage bots
+- **Crash Recovery** - Daemon restarts automatically on failure
+- **Remote Monitoring** - SSH in from anywhere to check status
+- **Safe Exit** - Choose to keep bots running or stop them
 
 ---
 
