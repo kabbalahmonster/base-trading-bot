@@ -8,7 +8,7 @@ import { ZeroXApi } from './api/ZeroXApi.js';
 import { JsonStorage } from './storage/JsonStorage.js';
 import { HeartbeatManager } from './bot/HeartbeatManager.js';
 import { GridCalculator } from './grid/GridCalculator.js';
-import { BotInstance, GridConfig } from './types/index.js';
+import { BotInstance, GridConfig, Position } from './types/index.js';
 import { formatEther, createPublicClient, formatUnits } from 'viem';
 import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
@@ -98,6 +98,7 @@ async function main() {
         message: 'What would you like to do?',
         choices: [
           { name: '🆕 Create new bot', value: 'create' },
+          { name: '⚙️  Reconfigure bot', value: 'reconfigure' },
           { name: '▶️  Start bot(s)', value: 'start' },
           { name: '⏹️  Stop bot(s)', value: 'stop' },
           { name: '⏸️  Enable/Disable bot', value: 'toggle' },
@@ -129,6 +130,9 @@ async function main() {
           break;
         case 'toggle':
           await toggleBotStatus(storage, heartbeatManager);
+          break;
+        case 'reconfigure':
+          await reconfigureBot(storage);
           break;
         case 'status':
           await showStatus(heartbeatManager, storage);
@@ -266,6 +270,20 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     },
     {
       type: 'confirm',
+      name: 'moonBagEnabled',
+      message: 'Enable moon bag (keep % of tokens on sell)?',
+      default: true,
+    },
+    {
+      type: 'number',
+      name: 'moonBagPercent',
+      message: 'Moon bag % to keep on each sell:',
+      default: 1,
+      when: (answers) => answers.moonBagEnabled,
+      validate: (input) => input >= 0 && input <= 50 || 'Must be 0-50%',
+    },
+    {
+      type: 'confirm',
       name: 'startImmediately',
       message: 'Start bot immediately?',
       default: false,
@@ -292,8 +310,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     stopLossEnabled: false,
     buysEnabled: true,
     sellsEnabled: true,
-    moonBagEnabled: true,
-    moonBagPercent: 1,
+    moonBagEnabled: answers.moonBagEnabled !== undefined ? answers.moonBagEnabled : true,
+    moonBagPercent: answers.moonBagPercent || 1,
     minProfitPercent: 2,
     maxActivePositions: answers.maxActivePositions,
     useFixedBuyAmount: answers.useFixedBuyAmount || false,
@@ -1578,6 +1596,282 @@ async function manageWallets(walletManager: WalletManager, storage: JsonStorage)
         console.log(chalk.red(`\n✗ Export failed: ${error.message}\n`));
       }
     }
+  }
+}
+
+async function reconfigureBot(storage: JsonStorage) {
+  console.log(chalk.cyan('\n⚙️  Reconfigure Bot\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found.\n'));
+    return;
+  }
+
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to reconfigure:',
+      choices: [
+        ...bots.map(b => ({ name: `${b.name} (${b.tokenSymbol})`, value: b.id })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  const bot = bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  // Warn if bot is running
+  if (bot.isRunning) {
+    console.log(chalk.yellow('\n⚠️  This bot is currently running.'));
+    console.log(chalk.yellow('   Stop the bot first to avoid conflicts.\n'));
+    const { proceed } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'proceed',
+        message: 'Proceed anyway?',
+        default: false,
+      },
+    ]);
+    if (!proceed) {
+      console.log(chalk.dim('Cancelled.\n'));
+      return;
+    }
+  }
+
+  console.log(chalk.cyan(`\nCurrent Configuration for ${bot.name}:`));
+  console.log(`  Token: ${bot.tokenSymbol} (${bot.tokenAddress})`);
+  console.log(`  Positions: ${bot.config.numPositions}`);
+  console.log(`  Take Profit: ${bot.config.takeProfitPercent}%`);
+  console.log(`  Max Active: ${bot.config.maxActivePositions}`);
+  console.log(`  Moon Bag: ${bot.config.moonBagEnabled ? bot.config.moonBagPercent + '%' : 'Disabled'}`);
+  console.log(`  Buy Amount: ${bot.config.useFixedBuyAmount ? bot.config.buyAmount + ' ETH' : 'Auto'}\n`);
+
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'What would you like to change?',
+      choices: [
+        { name: '📊 Change grid settings (positions, profit %)', value: 'grid' },
+        { name: '💰 Change buy settings (fixed amount, moon bag)', value: 'buy' },
+        { name: '🔄 Regenerate positions (preserve balances)', value: 'regenerate' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (action === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  if (action === 'grid') {
+    const answers = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'numPositions',
+        message: 'Number of grid positions:',
+        default: bot.config.numPositions,
+      },
+      {
+        type: 'number',
+        name: 'takeProfitPercent',
+        message: 'Take profit % per position:',
+        default: bot.config.takeProfitPercent,
+      },
+      {
+        type: 'number',
+        name: 'maxActivePositions',
+        message: 'Max active positions:',
+        default: bot.config.maxActivePositions,
+      },
+    ]);
+
+    bot.config.numPositions = answers.numPositions;
+    bot.config.takeProfitPercent = answers.takeProfitPercent;
+    bot.config.maxActivePositions = answers.maxActivePositions;
+    bot.lastUpdated = Date.now();
+    await storage.saveBot(bot);
+
+    console.log(chalk.green('\n✓ Grid settings updated\n'));
+  }
+
+  if (action === 'buy') {
+    const answers = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'useFixedBuyAmount',
+        message: 'Use fixed ETH amount per buy?',
+        default: bot.config.useFixedBuyAmount,
+      },
+      {
+        type: 'input',
+        name: 'buyAmount',
+        message: 'ETH amount per buy:',
+        default: String(bot.config.buyAmount || 0.001),
+        when: (a) => a.useFixedBuyAmount,
+      },
+      {
+        type: 'confirm',
+        name: 'moonBagEnabled',
+        message: 'Enable moon bag?',
+        default: bot.config.moonBagEnabled,
+      },
+      {
+        type: 'number',
+        name: 'moonBagPercent',
+        message: 'Moon bag % to keep:',
+        default: bot.config.moonBagPercent || 1,
+        when: (a) => a.moonBagEnabled,
+      },
+    ]);
+
+    bot.config.useFixedBuyAmount = answers.useFixedBuyAmount;
+    if (answers.useFixedBuyAmount) {
+      bot.config.buyAmount = parseFloat(answers.buyAmount);
+    }
+    bot.config.moonBagEnabled = answers.moonBagEnabled;
+    if (answers.moonBagEnabled) {
+      bot.config.moonBagPercent = answers.moonBagPercent;
+    }
+    bot.lastUpdated = Date.now();
+    await storage.saveBot(bot);
+
+    console.log(chalk.green('\n✓ Buy settings updated\n'));
+  }
+
+  if (action === 'regenerate') {
+    console.log(chalk.yellow('\n⚠️  Regenerating positions with balance preservation...\n'));
+
+    // Store current holding positions
+    const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING' && p.tokensReceived);
+    
+    if (holdingPositions.length > 0) {
+      console.log(chalk.cyan(`Found ${holdingPositions.length} positions with balances to preserve`));
+      for (const pos of holdingPositions) {
+        console.log(`  Position ${pos.id}: ${pos.tokensReceived} tokens @ buy ${pos.buyPrice}, sell ${pos.sellPrice}`);
+      }
+    }
+
+    const { confirm } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: `Regenerate ${bot.config.numPositions} positions while preserving ${holdingPositions.length} balances?`,
+        default: false,
+      },
+    ]);
+
+    if (!confirm) {
+      console.log(chalk.dim('Cancelled.\n'));
+      return;
+    }
+
+    // Get current price (use stored or fetch)
+    const currentPrice = bot.currentPrice || 0.000001;
+    
+    // Generate new grid
+    const newPositions = GridCalculator.generateGrid(currentPrice, bot.config);
+
+    // Merge holding positions into new grid
+    if (holdingPositions.length > 0) {
+      // Sort holding positions by buy price (descending - highest first)
+      const sortedHolding = [...holdingPositions].sort((a, b) => b.buyPrice - a.buyPrice);
+      
+      // If fewer new positions than holding positions, combine
+      if (newPositions.length < sortedHolding.length) {
+        console.log(chalk.yellow(`\n⚠️  New grid has fewer positions (${newPositions.length}) than holding positions (${sortedHolding.length})`));
+        console.log(chalk.yellow('   Combining positions into new grid...\n'));
+        
+        // Calculate combined position
+        let totalTokens = BigInt(0);
+        let totalEthCost = BigInt(0);
+        let highestSellPrice = 0;
+        let latestBuyTimestamp = 0;
+        
+        for (const pos of sortedHolding) {
+          totalTokens += BigInt(pos.tokensReceived || '0');
+          totalEthCost += BigInt(pos.ethCost || '0');
+          highestSellPrice = Math.max(highestSellPrice, pos.sellPrice);
+          latestBuyTimestamp = Math.max(latestBuyTimestamp, pos.buyTimestamp || 0);
+        }
+        
+        // Create a combined position at the best price level
+        const combinedPosition: Position = {
+          id: 0,
+          buyPrice: sortedHolding[0].buyPrice,
+          sellPrice: highestSellPrice,
+          stopLossPrice: sortedHolding[0].stopLossPrice,
+          status: 'HOLDING',
+          buyTxHash: sortedHolding[0].buyTxHash,
+          buyTimestamp: latestBuyTimestamp,
+          tokensReceived: totalTokens.toString(),
+          ethCost: totalEthCost.toString(),
+        };
+        
+        // Replace first position with combined
+        if (newPositions.length > 0) {
+          newPositions[0] = combinedPosition;
+        }
+        
+        console.log(chalk.green(`✓ Combined ${sortedHolding.length} positions into 1`));
+        console.log(chalk.green(`  Total tokens: ${totalTokens}`));
+        console.log(chalk.green(`  Sell price: ${highestSellPrice} (highest from combined)`));
+      } else {
+        // Enough positions - try to match holding positions to new grid
+        console.log(chalk.cyan('\nMatching holding positions to new grid...\n'));
+        
+        for (const holdingPos of sortedHolding) {
+          // Find closest new position with buy price >= holding buy price
+          const targetIndex = newPositions.findIndex(p => p.buyPrice <= holdingPos.buyPrice);
+          
+          if (targetIndex >= 0) {
+            // Preserve the holding position data but update ID
+            newPositions[targetIndex] = {
+              ...holdingPos,
+              id: newPositions[targetIndex].id,
+              // Keep original sell price if higher than new grid's sell price
+              sellPrice: Math.max(holdingPos.sellPrice, newPositions[targetIndex].sellPrice),
+            };
+            console.log(`  ✓ Position ${holdingPos.id} → new position ${newPositions[targetIndex].id}`);
+          } else {
+            // No suitable position found - add to lowest position
+            const lowestIndex = newPositions.length - 1;
+            const existingTokens = BigInt(newPositions[lowestIndex].tokensReceived || '0');
+            const holdingTokens = BigInt(holdingPos.tokensReceived || '0');
+            const existingCost = BigInt(newPositions[lowestIndex].ethCost || '0');
+            const holdingCost = BigInt(holdingPos.ethCost || '0');
+            
+            newPositions[lowestIndex] = {
+              ...holdingPos,
+              id: newPositions[lowestIndex].id,
+              tokensReceived: (existingTokens + holdingTokens).toString(),
+              ethCost: (existingCost + holdingCost).toString(),
+              sellPrice: Math.max(holdingPos.sellPrice, newPositions[lowestIndex].sellPrice),
+            };
+            console.log(`  ✓ Position ${holdingPos.id} → merged into lowest position`);
+          }
+        }
+      }
+    }
+
+    // Update bot with new positions
+    bot.positions = newPositions;
+    bot.lastUpdated = Date.now();
+    await storage.saveBot(bot);
+
+    console.log(chalk.green('\n✓ Positions regenerated successfully'));
+    console.log(chalk.cyan(`  Total positions: ${newPositions.length}`));
+    console.log(chalk.cyan(`  Holding positions preserved: ${holdingPositions.length}`));
+    console.log(chalk.cyan(`  Empty positions: ${newPositions.filter(p => p.status === 'EMPTY').length}\n`));
   }
 }
 
