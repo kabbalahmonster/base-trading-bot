@@ -82,7 +82,7 @@ async function main() {
           await reclaimFunds(walletManager, storage);
           break;
         case 'delete':
-          await deleteBot(heartbeatManager, storage);
+          await deleteBot(heartbeatManager, storage, walletManager);
           break;
       }
     } catch (error: any) {
@@ -481,12 +481,18 @@ async function sendToExternalWallet(walletManager: WalletManager) {
   }
 }
 
-async function reclaimFunds(_walletManager: WalletManager, storage: JsonStorage) {
+async function reclaimFunds(walletManager: WalletManager, storage: JsonStorage) {
   console.log(chalk.cyan('\n🏧 Reclaim Funds\n'));
 
   const bots = await storage.getAllBots();
   if (bots.length === 0) {
     console.log(chalk.yellow('No bots found.\n'));
+    return;
+  }
+
+  const mainWallet = await storage.getMainWallet();
+  if (!mainWallet) {
+    console.log(chalk.red('No main wallet found.\n'));
     return;
   }
 
@@ -502,18 +508,14 @@ async function reclaimFunds(_walletManager: WalletManager, storage: JsonStorage)
     },
   ]);
 
-  // botId is used for future implementation
-  console.log(chalk.dim(`Selected: ${botId === 'all' ? 'All bots' : 'Single bot'}`));
+  const botsToReclaim = botId === 'all' ? bots : bots.filter(b => b.id === botId);
 
-  const mainWallet = await storage.getMainWallet();
-  if (!mainWallet) {
-    console.log(chalk.red('No main wallet found.\n'));
-    return;
+  console.log(chalk.yellow(`\n⚠️  This will reclaim from ${botsToReclaim.length} bot(s):`));
+  for (const bot of botsToReclaim) {
+    const ethBalance = await getBotEthBalance(walletManager, bot);
+    console.log(chalk.yellow(`  - ${bot.name}: ${ethBalance} ETH`));
   }
-
-  console.log(chalk.yellow(`\n⚠️  This will:`));
-  console.log(chalk.yellow(`  1. Sell all tokens for ETH`));
-  console.log(chalk.yellow(`  2. Send all ETH to main wallet: ${mainWallet.address}`));
+  console.log(chalk.yellow(`\nFunds will be sent to main wallet: ${mainWallet.address}`));
 
   const { confirm } = await inquirer.prompt([
     {
@@ -529,12 +531,99 @@ async function reclaimFunds(_walletManager: WalletManager, storage: JsonStorage)
     return;
   }
 
-  console.log(chalk.dim('\nStarting reclaim process...'));
-  console.log(chalk.yellow('Note: Full reclaim implementation requires TradingBot integration'));
-  console.log(chalk.dim('This is a skeleton - wire up to TradingBot.sellAll() for full functionality\n'));
+  // Simple ETH reclaim (tokens would need TradingBot liquidation)
+  for (const bot of botsToReclaim) {
+    console.log(chalk.dim(`\nReclaiming from ${bot.name}...`));
+    
+    try {
+      const success = await reclaimBotEth(walletManager, storage, bot, mainWallet.address);
+      if (success) {
+        console.log(chalk.green(`✓ Reclaimed from ${bot.name}`));
+      } else {
+        console.log(chalk.yellow(`⚠ No ETH to reclaim from ${bot.name}`));
+      }
+    } catch (error: any) {
+      console.log(chalk.red(`✗ Failed to reclaim from ${bot.name}: ${error.message}`));
+    }
+  }
+
+  console.log(chalk.green('\n✓ Reclaim process complete\n'));
+  console.log(chalk.yellow('Note: Tokens were not sold. Use TradingBot liquidation to sell tokens first.'));
 }
 
-async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorage) {
+async function getBotEthBalance(walletManager: WalletManager, bot: BotInstance): Promise<string> {
+  try {
+    const { createPublicClient, http, formatEther } = await import('viem');
+    const { base } = await import('viem/chains');
+    
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(RPC_URL),
+    });
+    
+    const balance = await publicClient.getBalance({
+      address: bot.walletAddress as `0x${string}`,
+    });
+    
+    return formatEther(balance);
+  } catch {
+    return '0';
+  }
+}
+
+async function reclaimBotEth(walletManager: WalletManager, storage: JsonStorage, bot: BotInstance, mainAddress: string): Promise<boolean> {
+  const { createWalletClient, http, parseEther, formatEther } = await import('viem');
+  const { base } = await import('viem/chains');
+  const { createPublicClient } = await import('viem');
+  
+  const publicClient = createPublicClient({
+    chain: base,
+    transport: http(RPC_URL),
+  });
+  
+  // Get bot's balance
+  const balance = await publicClient.getBalance({
+    address: bot.walletAddress as `0x${string}`,
+  });
+  
+  // Leave 0.0001 ETH for gas
+  const reclaimAmount = balance - parseEther('0.0001');
+  
+  if (reclaimAmount <= BigInt(0)) {
+    return false;
+  }
+  
+  // Create wallet client for bot
+  let account;
+  if (bot.useMainWallet) {
+    account = walletManager.getMainAccount();
+  } else {
+    const walletDict = await storage.getWalletDictionary();
+    const botWalletData = walletDict[bot.id];
+    if (!botWalletData) return false;
+    
+    // Need to decrypt and get account
+    // This requires wallet manager to support loading arbitrary wallets
+    console.log(chalk.yellow(`⚠ Cannot reclaim from ${bot.name} - bot wallet decryption not implemented`));
+    return false;
+  }
+  
+  const walletClient = createWalletClient({
+    account,
+    chain: base,
+    transport: http(RPC_URL),
+  });
+  
+  const txHash = await walletClient.sendTransaction({
+    to: mainAddress as `0x${string}`,
+    value: reclaimAmount,
+  });
+  
+  await publicClient.waitForTransactionReceipt({ hash: txHash });
+  return true;
+}
+
+async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorage, walletManager: WalletManager) {
   const bots = await storage.getAllBots();
   if (bots.length === 0) {
     console.log(chalk.yellow('\nNo bots found\n'));
@@ -550,6 +639,35 @@ async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorag
     },
   ]);
 
+  const bot = bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  // Check for funds
+  const ethBalance = await getBotEthBalance(walletManager, bot);
+  const hasPositions = bot.positions.some(p => p.status === 'HOLDING');
+
+  if (parseFloat(ethBalance) > 0 || hasPositions) {
+    console.log(chalk.red('\n🚨 WARNING: This bot has funds!'));
+    console.log(chalk.yellow(`   ETH Balance: ${ethBalance} ETH`));
+    console.log(chalk.yellow(`   Active Positions: ${bot.positions.filter(p => p.status === 'HOLDING').length}`));
+    console.log(chalk.red('\n⚠️  Deleting will NOT reclaim these funds!'));
+    console.log(chalk.dim('   Use "🏧 Reclaim funds" first to recover your ETH\n'));
+    
+    const { forceDelete } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'forceDelete',
+        message: chalk.red('Delete anyway? (Funds will be lost!)'),
+        default: false,
+      },
+    ]);
+    
+    if (!forceDelete) {
+      console.log(chalk.yellow('Cancelled. Use "🏧 Reclaim funds" first.\n'));
+      return;
+    }
+  }
+
   const { confirm } = await inquirer.prompt([
     {
       type: 'confirm',
@@ -562,7 +680,8 @@ async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorag
   if (confirm) {
     heartbeatManager.removeBot(botId);
     await storage.deleteBot(botId);
-    console.log(chalk.green('\n✓ Bot deleted\n'));
+    console.log(chalk.green('\n✓ Bot deleted'));
+    console.log(chalk.dim('Note: Bot wallet still exists in storage but is no longer accessible via CLI\n'));
   }
 }
 
