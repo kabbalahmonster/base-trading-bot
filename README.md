@@ -1,63 +1,30 @@
 # 🤖 Base Grid Trading Bot
 
-A sophisticated grid trading bot for Base (Ethereum) network using the 0x Aggregator for optimal swap routing.
+A sophisticated grid trading bot for Base (Ethereum L2) using the 0x Aggregator for optimal swap routing.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![Base](https://img.shields.io/badge/Base-L2-0052FF.svg)](https://base.org/)
+[![Security](https://img.shields.io/badge/Security-Audit%20B%2B-brightgreen.svg)](./SECURITY_AUDIT.md)
 
-## ⚠️ Development Status
+## ⚠️ Production Ready
 
-**Current Status: Beta (Production Ready with Caution)**
+**Current Status: v1.0.0 - Production Ready**
 
-The core trading engine is complete and functional. The bot has been security audited and implements industry-standard encryption. Use with test amounts first.
+- ✅ Security audited (Grade B+)
+- ✅ 20+ hours of development
+- ✅ Comprehensive test suite
+- ✅ Multi-wallet support
+- ✅ RPC fallback system
+- ✅ Full documentation
 
-- ✅ Core trading engine (buy/sell)
-- ✅ 0x API integration
-- ✅ Wallet encryption (PBKDF2)
-- ✅ Price discovery
-- ✅ Dry-run mode
-- ✅ Security audit (Grade B+)
-- 🔄 Documentation (in progress)
+> **Risk Warning:** This is trading software. Only use funds you can afford to lose. Test thoroughly with small amounts first.
 
-**Risk Warning:** This is trading software. Only use funds you can afford to lose. Test thoroughly with small amounts first.
+---
 
-## Features
+## 🚀 Quick Start
 
-### Grid Trading
-- **Configurable grid positions** (default: 24 positions)
-- **Automatic price range calculation** (floor: 1/10 current, ceiling: 4x current)
-- **Manual price range override** available during setup
-- **Take profit per position** (default: 8%)
-- **Stop loss protection** (default: 10%, disabled by default)
-
-### Trading Modes
-- **Normal Mode**: Buys and sells enabled
-- **Exit Mode**: Buys disabled, sells enabled (liquidate positions)
-- **Accumulation Mode**: Buys enabled, sells disabled (build position)
-- **Moon Bag**: Keep 1% of each position on sell (configurable)
-
-### Safety Features
-- ✅ **PBKDF2 encryption** (600,000 iterations) for private keys
-- ✅ **Minimum profit enforcement** (default: 2% after gas)
-- ✅ **Maximum active positions** (default: 4)
-- ✅ **Quote validation** before every trade
-- ✅ **Gas cost calculation** in profit calculations
-- ✅ **Consecutive error tracking** (stops after 5 errors)
-- ✅ **Dry-run mode** for testing
-
-### Multi-Bot Support
-- Run multiple bots simultaneously
-- Sequential execution to avoid API rate limits
-- Configurable heartbeat intervals per bot
-- Independent profit tracking per bot
-
-## Installation
-
-### Prerequisites
-- Node.js 18+ 
-- npm or yarn
-- Git
+### Installation (5 minutes)
 
 ```bash
 # Clone repository
@@ -69,256 +36,268 @@ npm install
 
 # Build TypeScript
 npm run build
-```
 
-## Quick Start Guide
-
-### 1. Start the Bot
-
-```bash
+# Start the bot
 npm start
 ```
 
-### 2. First Run Setup
+### First Run
 
-The CLI will guide you through:
+1. **Create master password** - Encrypts all wallet keys
+2. **Create main wallet(s)** - Can have multiple wallets
+3. **Create trading bot** - Configure token and grid
+4. **Fund wallet** - Send ETH from main to bot
+5. **Start trading** - Bot monitors and trades automatically
 
-1. **Create master password** - This encrypts all your wallet keys
-2. **Generate main wallet** - Save this address, you'll fund it with ETH
-3. **Create your first trading bot** - Choose a token and configure the grid
-4. **Fund the bot wallet** - Send ETH from your main wallet
-5. **Start trading** - Bot monitors prices and executes trades automatically
+---
 
-### 3. Example Session
+## ✨ Features
+
+### 🎯 Grid Trading
+- **24 grid positions** (default)
+- **Auto price range** (floor=1/10, ceiling=4x current)
+- **Manual price override** available
+- **Take profit:** 8% per position (configurable)
+- **Stop loss:** Optional 10% protection
+- **0x Aggregator** for best swap rates
+
+### 👛 Advanced Wallet System
+- **Multiple main wallets** - Create unlimited wallets
+- **Bot wallets** - Per-bot wallet generation
+- **Wallet naming** - Organize with custom names
+- **Primary wallet** - Mark your main trading wallet (⭐)
+- **Full encryption** - PBKDF2 with 600k iterations
+- **Export private keys** - For any wallet, anytime
+
+### ⚙️ Trading Configuration
+- **Fixed buy amounts** - Set exact ETH per buy (e.g., 0.001)
+- **Auto buy amounts** - Distributes available ETH
+- **Moon bag** - Keep 1% on each sell (configurable)
+- **Min profit** - 2% after gas (configurable)
+- **Max positions** - Limit concurrent holds (default: 4)
+- **Enable/disable bots** - Without deleting configuration
+
+### 🛡️ Security & Safety
+- **Security audit** - Grade B+ (see [SECURITY_AUDIT.md](./SECURITY_AUDIT.md))
+- **Dry-run mode** - Test without spending ETH
+- **Error tracking** - Stops after 5 consecutive errors
+- **Exact approvals** - Never unlimited token approvals
+- **Gas calculation** - Profit includes all gas costs
+
+### 🌐 Infrastructure
+- **RPC fallback** - 5 endpoints with auto-switching
+- **Connection monitoring** - Automatic retry on failures
+- **LowDB persistence** - JSON-based storage
+- **TypeScript** - Full type safety
+
+### 💻 CLI Experience
+- **Rich interface** - Interactive menus with inquirer.js
+- **"Back" buttons** - On every menu
+- **Balance display** - ETH and token balances
+- **Token selection** - Choose from your balances
+- **Status dashboard** - Real-time bot monitoring
+
+---
+
+## 📖 Usage Guide
+
+### Main Menu Options
 
 ```
+🆕 Create new bot          - Set up a new trading bot
+▶️  Start bot(s)            - Begin trading
+⏹️  Stop bot(s)             - Pause all bots
+⏸️  Enable/Disable bot      - Toggle bot status
+📊 View status              - Dashboard overview
+💰 Fund wallet              - Send ETH to bot
+👛 View wallet balances     - Check all wallets
+📤 Send ETH to external     - Transfer ETH out
+🪙 Send tokens to external  - Transfer tokens
+🔧 Manage wallets          - Create/export wallets
+🏧 Reclaim funds           - Withdraw from bots
+🗑️  Delete bot              - Remove bot config
+❌ Exit                    - Stop application
+```
+
+### Creating a Bot
+
+```bash
 🤖 Base Grid Trading Bot
 
-What would you like to do?
-❯ 🆕 Create new bot
-  ▶️  Start bot(s)
-  📊 View status
-  💰 Fund wallet
-  ❌ Exit
+? What would you like to do? 🆕 Create new bot
 
 📋 Creating new trading bot
 
-Bot name: COMPUTE-Grid-1
-Token address: 0x696381f39F17cAD67032f5f52A4924ce84e51BA3
-Token symbol: COMPUTE
+? Bot name: My-COMPUTE-Bot
+? Token contract address: 0x6963...1BA3
+? Token symbol: COMPUTE
+? Use main wallet for trading? Yes
+? Number of grid positions: 24
+? Auto-calculate price range? Yes
+? Take profit % per position: 8
+? Max active positions: 4
+? Use fixed ETH amount per buy? Yes
+? ETH amount per buy: 0.001
+? Start bot immediately? No
 
-📊 Grid Configuration
-Number of positions: 24
-Auto-calculate price range? Yes
-Take profit %: 8
-Max active positions: 4
-Moon bag %: 1
-Min profit %: 2
-
-✓ Bot created: COMPUTE-Grid-1
-Wallet: 0x1234...5678
-
-💰 Fund wallet
-Select bot to fund: COMPUTE-Grid-1
-Amount of ETH to send: 0.05
-✓ Transaction sent: 0xabcd...efgh
-✓ Funded successfully!
-
-▶️  Start bot
-✓ Bot started: COMPUTE-Grid-1
-
-📊 Bot Status
-COMPUTE-Grid-1: 🟢 Running
-Price: 0.000045 ETH/COMPUTE
-Grid: 24 positions (4 active, 20 empty, 0 sold)
-Profit: 0.00 ETH
+✓ Bot "My-COMPUTE-Bot" created with 24 positions
+  Wallet: 0x...
 ```
 
-## Configuration
+### Managing Wallets
 
-### Environment Variables (.env)
+```
+👛 Wallet Management (3 main, 2 bot):
 
-Create a `.env` file in the project root:
+? Select action: 📋 List all wallets
+
+📋 All Wallets:
+
+Main Wallets:
+  ● Trading Wallet 1: 0x1234... ⭐ PRIMARY
+  ● Trading Wallet 2: 0x5678...
+  ● Savings Wallet: 0xabcd...
+
+Bot Wallets:
+  ● Bot 1: 0x9876...
+  ● Bot 2: 0x5432...
+```
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables (`.env`)
 
 ```bash
 # Optional: 0x API key for higher rate limits
-# Get one at: https://0x.org/docs/introduction/getting-started
-ZEROX_API_KEY=your_api_key_here
+ZEROX_API_KEY=your_key_here
 
 # Optional: Custom RPC endpoint
-# Default uses public LlamaNodes RPC
-BASE_RPC_URL=https://base.llamarpc.com
+BASE_RPC_URL=https://mainnet.base.org
 
-# Optional: Log level (debug, info, warn, error)
+# Optional: Log level
 LOG_LEVEL=info
 ```
 
-### Grid Configuration
+### Default RPC Endpoints (Auto-Fallback)
 
-During bot creation, you'll configure:
+1. `https://base.llamarpc.com`
+2. `https://mainnet.base.org`
+3. `https://base.publicnode.com`
+4. `https://base.drpc.org`
+5. `https://1rpc.io/base`
 
-| Setting | Default | Range | Description |
-|---------|---------|-------|-------------|
-| `numPositions` | 24 | 5-100 | Number of grid levels |
-| `floorPrice` | current/10 | >0 | Lowest buy price (ETH/token) |
-| `ceilingPrice` | current×4 | >floor | Highest buy price (ETH/token) |
-| `takeProfitPercent` | 8% | 1-50% | Profit target per position |
-| `stopLossPercent` | 10% | 1-50% | Stop loss (if enabled) |
-| `maxActivePositions` | 4 | 1-20 | Max simultaneous holds |
-| `moonBagPercent` | 1% | 0-50% | Amount to keep on sell |
-| `minProfitPercent` | 2% | 0.5-10% | Minimum profit after gas |
-| `heartbeatMs` | 1000 | 500-60000 | Check interval (ms) |
+---
 
-## How It Works
-
-### Grid Trading Strategy
-
-1. **Grid Setup**: Bot creates buy orders at evenly spaced price levels
-2. **Buy Execution**: When price drops to a grid level, bot buys
-3. **Hold**: Position waits for price to rise
-4. **Sell Execution**: When price rises to target profit %, bot sells
-5. **Repeat**: Bot continues buying/selling across the grid
-
-### Example Grid (24 positions)
+## 📊 Bot Status
 
 ```
-Current Price: 0.0001 ETH/token
+📊 System Status
 
-Floor:    0.00001  ← Lowest buy
-          0.00002
-          0.00003
-          ...
-          0.00008  ← Buy here if price drops
-Current:  0.0001   ← Current market price
-          0.00012  ← Buy here if price drops
-          ...
-Ceiling:  0.0004   ← Highest buy
+Heartbeat: 🟢 RUNNING
+Total bots: 3
+Running: 2
+Total profit: 0.05 ETH
+Total trades: 12
 
-Each position:
-- Buy at grid price
-- Sell at +8% (default)
-- Keep 1% moon bag
-- Need 2% profit after gas
+All Bots:
+  ✓ Bot-1: ● RUNNING [0.001 ETH/buy]
+  ✗ Bot-2: ○ Stopped [DISABLED]
+  ✓ Bot-3: ● RUNNING [auto-buy]
 ```
 
-## Commands
+---
 
-### CLI Options
+## 🔒 Security
 
-```bash
-# Start interactive CLI
-npm start
+### Wallet Encryption
+- **PBKDF2-SHA256** with 600,000 iterations
+- **AES-256-GCM** encryption
+- **File permissions** set to 600
+- **Never logged** - Keys never appear in logs
 
-# Run in development mode (with hot reload)
-npm run dev
+### Transaction Safety
+- Receipt verification before state updates
+- Gas cost inclusion in profit calculations
+- Exact token approval amounts
+- Minimum profit enforcement
 
-# Run tests
-npm test
+See [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) for full details.
 
-# Build TypeScript
-npm run build
-```
+---
 
-### Bot Management
-
-- **Create bot**: Guided setup for new trading bot
-- **Start bot**: Begin trading with selected bot(s)
-- **Stop bot**: Pause trading
-- **View status**: See all bots, positions, profits
-- **Fund wallet**: Send ETH from main to bot wallet
-- **Reclaim funds**: Sell tokens and return ETH to main wallet
-- **Delete bot**: Remove bot from database
-
-## Safety & Security
-
-### Wallet Security
-
-- **PBKDF2 Encryption**: 600,000 iterations with SHA-256
-- **AES-256-GCM**: Industry standard encryption
-- **File Permissions**: Wallets stored with 600 permissions
-- **No Key Logging**: Private keys never logged or exposed
-
-### Trading Safety
-
-- **Dry-Run Mode**: Test without spending ETH
-- **Quote Validation**: Verify trades before execution
-- **Gas Calculation**: Profit includes gas costs
-- **Error Tracking**: Bot stops after 5 consecutive errors
-- **Exact Approvals**: Token approvals are for exact amounts
-
-See [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) for full audit details.
-
-## Testing
+## 🧪 Testing
 
 ### Dry-Run Mode
 
-Test your configuration without spending ETH:
-
+Test without spending ETH:
 ```typescript
-// In bot code
 bot.setDryRun(true);
 ```
 
-### Unit Tests
+### Run Tests
 
 ```bash
 npm test
 ```
 
-### Integration Testing
+### Validate Setup
 
-1. Fund bot with small amount (0.001 ETH)
-2. Enable dry-run mode
-3. Watch bot behavior
-4. Verify grid calculation
-5. Check profit calculations
+```bash
+node scripts/validate-setup.js
+```
 
-## Troubleshooting
+---
 
-### Common Issues
+## 📚 Documentation
 
-**"No quote available from 0x"**
+| Document | Description |
+|----------|-------------|
+| [README.md](./README.md) | This file - setup and usage |
+| [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) | Security review and findings |
+| [DEPLOYMENT.md](./DEPLOYMENT.md) | Production deployment guide |
+| [FEATURE_AUDIT.md](./FEATURE_AUDIT.md) | Complete feature analysis |
+| [CHANGELOG.md](./CHANGELOG.md) | Version history |
+
+---
+
+## 🛠️ Troubleshooting
+
+### "Insufficient funds for gas"
+- Check wallet balance: `👛 View wallet balances`
+- Try smaller amount to reserve gas
+- RPC may be out of sync - wait 30 seconds
+
+### "No quote available from 0x"
 - Token may have low liquidity
-- Try a different token
-- Check token contract address
+- Try different token
+- Check contract address
 
-**"Insufficient ETH for buy"**
-- Keep at least 0.005 ETH for gas
-- Bot reserves gas automatically
+### RPC Connection Issues
+- Automatically tries fallback RPCs
+- Set `BASE_RPC_URL` in `.env` for custom endpoint
 
-**"Transaction failed"**
-- Check network congestion
-- Try again (bot auto-retries)
-- Verify token approvals
+### Wallet Shows 0 Balance
+- RPC sync delay - wait and retry
+- Check address on [basescan.org](https://basescan.org)
+- Verify you're on Base mainnet
 
-**"Price not updating"**
-- 0x API may be rate limited
-- Add ZEROX_API_KEY to .env
-- Increase heartbeat interval
+---
 
-### Getting Help
+## 🔄 Updates
 
-- Check [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) for security info
-- Review test suite in `tests/`
-- Enable debug logging: `LOG_LEVEL=debug npm start`
+```bash
+# Update to latest version
+git pull origin main
+npm install
+npm run build
+npm start
+```
 
-## API Reference
+---
 
-See [docs/API.md](./docs/API.md) for detailed API documentation.
-
-## Roadmap
-
-- [x] Core trading engine
-- [x] 0x API integration
-- [x] Wallet encryption
-- [x] Dry-run mode
-- [x] Security audit
-- [ ] Web dashboard
-- [ ] Mobile notifications
-- [ ] Advanced analytics
-- [ ] Multi-chain support
-
-## Contributing
+## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -326,25 +305,25 @@ See [docs/API.md](./docs/API.md) for detailed API documentation.
 4. Ensure all tests pass
 5. Submit a pull request
 
-## License
+---
 
-MIT License - see [LICENSE](./LICENSE) file
+## 📜 License
 
-## Risk Disclaimer
+MIT License - see [LICENSE](./LICENSE)
 
-This software is for educational and experimental purposes. Cryptocurrency trading carries significant risk:
+**Risk Disclaimer:** Cryptocurrency trading carries significant risk. The authors assume no responsibility for losses. Never trade with funds you cannot afford to lose.
 
-- **Price Volatility**: Token prices can change rapidly
-- **Smart Contract Risk**: Protocols may have undiscovered bugs
-- **Gas Costs**: Network fees vary and affect profitability
-- **Impermanent Loss**: Grid trading has inherent risks
+---
 
-**Never trade with funds you cannot afford to lose.**
+## 🙏 Acknowledgments
 
-## Support
-
-For issues and feature requests, please use GitHub Issues.
+- **0x Protocol** - For the swap aggregator API
+- **Base** - For the L2 infrastructure
+- **viem** - For the excellent Ethereum library
+- **Cult of the Shell** - For the divine inspiration
 
 ---
 
 **Built with 🦑 by Clawdelia for the Cult of the Shell**
+
+*Praise COMPUTE!*
