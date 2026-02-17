@@ -48,7 +48,9 @@ async function main() {
           { name: '⏹️  Stop bot(s)', value: 'stop' },
           { name: '📊 View status', value: 'status' },
           { name: '💰 Fund wallet', value: 'fund' },
-          { name: '📤 Send to external wallet', value: 'send_external' },
+          { name: '📤 Send ETH to external', value: 'send_external' },
+          { name: '🪙 Send tokens to external', value: 'send_tokens' },
+          { name: '👛 Manage wallets', value: 'manage_wallets' },
           { name: '🏧 Reclaim funds', value: 'reclaim' },
           { name: '🗑️  Delete bot', value: 'delete' },
           { name: '❌ Exit', value: 'exit' },
@@ -77,6 +79,12 @@ async function main() {
           break;
         case 'send_external':
           await sendToExternalWallet(walletManager, storage);
+          break;
+        case 'send_tokens':
+          await sendTokensToExternal(walletManager, storage);
+          break;
+        case 'manage_wallets':
+          await manageWallets(walletManager, storage);
           break;
         case 'reclaim':
           await reclaimFunds(walletManager, storage);
@@ -409,7 +417,7 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
 }
 
 async function sendToExternalWallet(walletManager: WalletManager, storage: JsonStorage) {
-  console.log(chalk.cyan('\n📤 Send to External Wallet\n'));
+  console.log(chalk.cyan('\n📤 Send ETH to External Wallet\n'));
 
   // Initialize wallet manager with password
   const mainWallet = await storage.getMainWallet();
@@ -435,9 +443,25 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
     return;
   }
 
-  // Show main wallet address
-  const mainAccount = walletManager.getMainAccount();
-  console.log(chalk.dim(`From: ${mainAccount.address}`));
+  // Get all wallets (main + bots)
+  const allWallets = [
+    { name: 'Main Wallet', address: mainWallet.address },
+    ...Object.entries(await storage.getWalletDictionary()).map(([id, wallet]) => ({
+      name: `Bot Wallet (${id.slice(0, 8)}...)`,
+      address: wallet.address,
+    })),
+  ];
+
+  const { fromWallet } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'fromWallet',
+      message: 'Select wallet to send from:',
+      choices: allWallets.map(w => ({ name: `${w.name}: ${w.address.slice(0, 12)}...`, value: w.address })),
+    },
+  ]);
+
+  console.log(chalk.dim(`From: ${fromWallet}`));
 
   const { recipient, amount } = await inquirer.prompt([
     {
@@ -476,8 +500,9 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
     const { createWalletClient, http, parseEther } = await import('viem');
     const { base } = await import('viem/chains');
 
+    const account = walletManager.getAccountForAddress(fromWallet);
     const walletClient = createWalletClient({
-      account: mainAccount,
+      account,
       chain: base,
       transport: http(RPC_URL),
     });
@@ -502,6 +527,271 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
 
   } catch (error: any) {
     console.log(chalk.red(`\n✗ Transaction failed: ${error.message}\n`));
+  }
+}
+
+async function sendTokensToExternal(walletManager: WalletManager, storage: JsonStorage) {
+  console.log(chalk.cyan('\n🪙 Send Tokens to External Wallet\n'));
+
+  // Initialize wallet manager with password
+  const mainWallet = await storage.getMainWallet();
+  if (!mainWallet) {
+    console.log(chalk.red('No main wallet found. Create a bot first.\n'));
+    return;
+  }
+
+  const { password } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Enter master password:',
+      mask: '*',
+    },
+  ]);
+
+  try {
+    await walletManager.initialize(password);
+    walletManager.importData({ mainWallet, walletDictionary: await storage.getWalletDictionary() });
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
+    return;
+  }
+
+  // Get all wallets (main + bots)
+  const allWallets = [
+    { name: 'Main Wallet', address: mainWallet.address, id: 'main' },
+    ...Object.entries(await storage.getWalletDictionary()).map(([id, wallet]) => ({
+      name: `Bot Wallet (${id.slice(0, 8)}...)`,
+      address: wallet.address,
+      id,
+    })),
+  ];
+
+  const { fromWallet } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'fromWallet',
+      message: 'Select wallet to send from:',
+      choices: allWallets.map(w => ({ name: `${w.name}: ${w.address.slice(0, 12)}...`, value: w.address })),
+    },
+  ]);
+
+  const { tokenAddress, recipient, amount } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'tokenAddress',
+      message: 'Token contract address (0x...):',
+      validate: (input) => input.startsWith('0x') && input.length === 42 || 'Invalid address',
+    },
+    {
+      type: 'input',
+      name: 'recipient',
+      message: 'Recipient address (0x...):',
+      validate: (input) => input.startsWith('0x') && input.length === 42 || 'Invalid address',
+    },
+    {
+      type: 'input',
+      name: 'amount',
+      message: 'Amount of tokens to send:',
+      validate: (input) => !isNaN(parseFloat(input)) && parseFloat(input) > 0 || 'Invalid amount',
+    },
+  ]);
+
+  console.log(chalk.yellow(`\n⚠️  About to send ${amount} tokens to ${recipient}`));
+  console.log(chalk.red('⚠️  DOUBLE-CHECK THE TOKEN AND ADDRESS - TRANSACTIONS CANNOT BE REVERSED'));
+
+  const { confirm } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: 'Confirm transaction?',
+      default: false,
+    },
+  ]);
+
+  if (!confirm) {
+    console.log(chalk.yellow('Cancelled.\n'));
+    return;
+  }
+
+  try {
+    const { createWalletClient, http, parseUnits, erc20Abi } = await import('viem');
+    const { base } = await import('viem/chains');
+
+    const account = walletManager.getAccountForAddress(fromWallet);
+    const walletClient = createWalletClient({
+      account,
+      chain: base,
+      transport: http(RPC_URL),
+    });
+
+    // Get token decimals (assume 18 if fails)
+    let decimals = 18;
+    try {
+      const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL) });
+      decimals = await publicClient.readContract({
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'decimals',
+      });
+    } catch {
+      console.log(chalk.yellow('⚠ Could not read token decimals, using 18'));
+    }
+
+    const tokenAmount = parseUnits(amount, decimals);
+
+    console.log(chalk.dim('Sending token transaction...'));
+
+    const txHash = await walletClient.writeContract({
+      address: tokenAddress as `0x${string}`,
+      abi: erc20Abi,
+      functionName: 'transfer',
+      args: [recipient as `0x${string}`, tokenAmount],
+    });
+
+    console.log(chalk.green(`\n✓ Transaction sent: ${txHash}`));
+    console.log(chalk.dim('Waiting for confirmation...'));
+
+    const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL) });
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+    console.log(chalk.green(`✓ Sent ${amount} tokens to ${recipient.slice(0, 10)}... successfully!\n`));
+
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Transaction failed: ${error.message}\n`));
+  }
+}
+
+async function manageWallets(walletManager: WalletManager, storage: JsonStorage) {
+  console.log(chalk.cyan('\n👛 Wallet Management\n'));
+
+  const mainWallet = await storage.getMainWallet();
+  if (!mainWallet) {
+    console.log(chalk.red('No wallets found. Create a bot first.\n'));
+    return;
+  }
+
+  const { password } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Enter master password:',
+      mask: '*',
+    },
+  ]);
+
+  try {
+    await walletManager.initialize(password);
+    walletManager.importData({ mainWallet, walletDictionary: await storage.getWalletDictionary() });
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
+    return;
+  }
+
+  const walletDictionary = await storage.getWalletDictionary();
+
+  while (true) {
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Wallet Management:',
+        choices: [
+          { name: '📋 List all wallets', value: 'list' },
+          { name: '🔑 Export private key', value: 'export' },
+          { name: '⬅️  Back', value: 'back' },
+        ],
+      },
+    ]);
+
+    if (action === 'back') break;
+
+    if (action === 'list') {
+      console.log(chalk.cyan('\n📋 All Wallets:\n'));
+      console.log(chalk.green(`Main Wallet: ${mainWallet.address}`));
+      console.log(chalk.dim(`  Created: ${new Date(mainWallet.createdAt).toLocaleString()}`));
+
+      if (Object.keys(walletDictionary).length === 0) {
+        console.log(chalk.dim('\nNo bot wallets found.'));
+      } else {
+        console.log(chalk.cyan('\nBot Wallets:'));
+        for (const [id, wallet] of Object.entries(walletDictionary)) {
+          console.log(chalk.green(`${id.slice(0, 16)}...: ${wallet.address}`));
+          console.log(chalk.dim(`  Created: ${new Date(wallet.createdAt).toLocaleString()}`));
+        }
+      }
+      console.log();
+    }
+
+    if (action === 'export') {
+      const allWallets = [
+        { name: 'Main Wallet', id: 'main' as const },
+        ...Object.keys(walletDictionary).map(id => ({ name: `Bot Wallet (${id.slice(0, 8)}...)`, id })),
+      ];
+
+      const { walletId } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'walletId',
+          message: 'Select wallet to export:',
+          choices: allWallets.map(w => ({ name: w.name, value: w.id })),
+        },
+      ]);
+
+      console.log(chalk.red('\n🚨 SECURITY WARNING 🚨'));
+      console.log(chalk.red('The private key gives FULL CONTROL of the wallet.'));
+      console.log(chalk.red('Never share it with anyone!'));
+      console.log(chalk.yellow('\n⚠️  Only export to use in another wallet interface (MetaMask, etc.)'));
+      console.log(chalk.yellow('⚠️  Store it securely offline (password manager, encrypted file, paper)'));
+      console.log(chalk.yellow('⚠️  Anyone with this key can steal all funds!\n'));
+
+      const { confirmExport } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirmExport',
+          message: chalk.red('I understand the risks. Show me the private key.'),
+          default: false,
+        },
+      ]);
+
+      if (!confirmExport) {
+        console.log(chalk.yellow('Export cancelled.\n'));
+        continue;
+      }
+
+      try {
+        const privateKey = walletManager.exportPrivateKey(walletId);
+        const walletIdInfo = walletManager.getWalletIdForAddress(
+          walletId === 'main' ? mainWallet.address : walletDictionary[walletId].address
+        );
+
+        console.log(chalk.cyan('\n🔑 Private Key:'));
+        console.log(chalk.green(privateKey));
+        console.log(chalk.cyan('\n📍 Address:'));
+        console.log(chalk.green(
+          walletId === 'main' ? mainWallet.address : walletDictionary[walletId].address
+        ));
+        console.log(chalk.red('\n⚠️  Copy this key NOW. Clear your terminal history after!'));
+        console.log(chalk.dim('   (Type "history -c" in bash to clear)\n'));
+
+        const { clearNow } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'clearNow',
+            message: 'Have you copied the key? (Will pause 10s before continuing)',
+            default: false,
+          },
+        ]);
+
+        if (clearNow) {
+          console.log(chalk.yellow('\n⏸ Pausing for 10 seconds...'));
+          await new Promise(resolve => setTimeout(resolve, 10000));
+          console.log(chalk.dim('Screen cleared from memory.\n'));
+        }
+
+      } catch (error: any) {
+        console.log(chalk.red(`\n✗ Export failed: ${error.message}\n`));
+      }
+    }
   }
 }
 

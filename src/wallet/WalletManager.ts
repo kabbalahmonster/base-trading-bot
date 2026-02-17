@@ -129,6 +129,64 @@ export class WalletManager {
   }
 
   /**
+   * Export private key for a wallet (main or bot)
+   */
+  exportPrivateKey(walletId: 'main' | string): string {
+    if (!this.password) throw new Error('WalletManager not initialized');
+
+    let encryptedPrivateKey: string;
+    
+    if (walletId === 'main') {
+      if (!this.mainWallet) throw new Error('Main wallet not found');
+      encryptedPrivateKey = this.mainWallet.encryptedPrivateKey;
+    } else {
+      const walletData = this.walletDictionary[walletId];
+      if (!walletData) throw new Error(`Wallet not found for ID: ${walletId}`);
+      encryptedPrivateKey = walletData.encryptedPrivateKey;
+    }
+
+    return this.decryptPrivateKey(encryptedPrivateKey, this.password);
+  }
+
+  /**
+   * Get account for any wallet address (main or bot)
+   */
+  getAccountForAddress(address: string): Account {
+    if (!this.password) throw new Error('WalletManager not initialized');
+
+    // Check main wallet
+    if (this.mainWallet && this.mainWallet.address.toLowerCase() === address.toLowerCase()) {
+      return this.getMainAccount();
+    }
+
+    // Check bot wallets
+    for (const [botId, walletData] of Object.entries(this.walletDictionary)) {
+      if (walletData.address.toLowerCase() === address.toLowerCase()) {
+        return this.getBotAccount(botId);
+      }
+    }
+
+    throw new Error(`No wallet found for address: ${address}`);
+  }
+
+  /**
+   * Get wallet ID for an address
+   */
+  getWalletIdForAddress(address: string): { type: 'main' | 'bot'; id: string } | null {
+    if (this.mainWallet && this.mainWallet.address.toLowerCase() === address.toLowerCase()) {
+      return { type: 'main', id: 'main' };
+    }
+
+    for (const [botId, walletData] of Object.entries(this.walletDictionary)) {
+      if (walletData.address.toLowerCase() === address.toLowerCase()) {
+        return { type: 'bot', id: botId };
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Encrypt private key using PBKDF2
    */
   private encryptPrivateKey(privateKey: string, password: string): string {
