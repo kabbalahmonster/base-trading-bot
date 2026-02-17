@@ -137,7 +137,7 @@ async function main() {
           await fundWallet(walletManager, storage);
           break;
         case 'view_balances':
-          await viewWalletBalances(storage);
+          await viewWalletBalances(storage, walletManager);
           break;
         case 'send_external':
           await sendToExternalWallet(walletManager, storage);
@@ -502,17 +502,49 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
   }
 }
 
-async function viewWalletBalances(storage: JsonStorage) {
+async function viewWalletBalances(storage: JsonStorage, walletManager: WalletManager) {
   console.log(chalk.cyan('\n👛 Wallet Balances\n'));
   
   // Get working RPC
   const workingRpc = await getWorkingRpc();
   console.log(chalk.dim(`Using RPC: ${workingRpc}\n`));
 
-  const mainWallet = await storage.getMainWallet();
+  let mainWallet = await storage.getMainWallet();
+  
+  // If no main wallet exists, offer to create one
   if (!mainWallet) {
-    console.log(chalk.yellow('No wallets found. Create a bot first.\n'));
-    return;
+    console.log(chalk.yellow('No main wallet found.\n'));
+    const { createWallet } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'createWallet',
+        message: 'Create a main wallet?',
+        default: true,
+      },
+    ]);
+    
+    if (!createWallet) {
+      console.log(chalk.dim('Cancelled.\n'));
+      return;
+    }
+    
+    // Create main wallet
+    const { password } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Create master password (min 8 chars):',
+        mask: '*',
+        validate: (input) => input.length >= 8 || 'Password must be at least 8 characters',
+      },
+    ]);
+    
+    await walletManager.initialize(password);
+    mainWallet = walletManager.generateMainWallet();
+    await storage.setMainWallet(mainWallet);
+    
+    console.log(chalk.green(`\n✓ Main wallet created: ${mainWallet.address}`));
+    console.log(chalk.yellow('⚠️  Save this address - you need to fund it with ETH\n'));
   }
 
   const walletDictionary = await storage.getWalletDictionary();
@@ -688,9 +720,40 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
   console.log(chalk.cyan('\n📤 Send ETH to External Wallet\n'));
 
   // Initialize wallet manager with password
-  const mainWallet = await storage.getMainWallet();
+  let mainWallet = await storage.getMainWallet();
   if (!mainWallet) {
-    console.log(chalk.red('No main wallet found. Create a bot first.\n'));
+    console.log(chalk.yellow('No main wallet found.\n'));
+    const { createWallet } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'createWallet',
+        message: 'Create a main wallet?',
+        default: true,
+      },
+    ]);
+    
+    if (!createWallet) {
+      console.log(chalk.dim('Cancelled.\n'));
+      return;
+    }
+    
+    // Create main wallet
+    const { password } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Create master password (min 8 chars):',
+        mask: '*',
+        validate: (input) => input.length >= 8 || 'Password must be at least 8 characters',
+      },
+    ]);
+    
+    await walletManager.initialize(password);
+    mainWallet = walletManager.generateMainWallet();
+    await storage.setMainWallet(mainWallet);
+    
+    console.log(chalk.green(`\n✓ Main wallet created: ${mainWallet.address}`));
+    console.log(chalk.yellow('⚠️  Save this address - you need to fund it with ETH\n'));
     return;
   }
 
@@ -868,9 +931,40 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
   console.log(chalk.cyan('\n🪙 Send Tokens to External Wallet\n'));
 
   // Initialize wallet manager with password
-  const mainWallet = await storage.getMainWallet();
+  let mainWallet = await storage.getMainWallet();
   if (!mainWallet) {
-    console.log(chalk.red('No main wallet found. Create a bot first.\n'));
+    console.log(chalk.yellow('No main wallet found.\n'));
+    const { createWallet } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'createWallet',
+        message: 'Create a main wallet?',
+        default: true,
+      },
+    ]);
+    
+    if (!createWallet) {
+      console.log(chalk.dim('Cancelled.\n'));
+      return;
+    }
+    
+    // Create main wallet
+    const { password } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Create master password (min 8 chars):',
+        mask: '*',
+        validate: (input) => input.length >= 8 || 'Password must be at least 8 characters',
+      },
+    ]);
+    
+    await walletManager.initialize(password);
+    mainWallet = walletManager.generateMainWallet();
+    await storage.setMainWallet(mainWallet);
+    
+    console.log(chalk.green(`\n✓ Main wallet created: ${mainWallet.address}`));
+    console.log(chalk.yellow('⚠️  Save this address - you need to fund it with ETH\n'));
     return;
   }
 
@@ -985,7 +1079,6 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
 
     console.log(chalk.dim('Sending token transaction...'));
 
-    const workingRpc = await getWorkingRpc();
     const txHash = await walletClient.writeContract({
       address: tokenAddress as `0x${string}`,
       abi: erc20Abi,
@@ -1008,9 +1101,42 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
 async function manageWallets(walletManager: WalletManager, storage: JsonStorage) {
   console.log(chalk.cyan('\n👛 Wallet Management\n'));
 
-  const mainWallet = await storage.getMainWallet();
+  let mainWallet = await storage.getMainWallet();
+  
+  // If no main wallet exists, offer to create one
   if (!mainWallet) {
-    console.log(chalk.red('No wallets found. Create a bot first.\n'));
+    console.log(chalk.yellow('No main wallet found.\n'));
+    const { createWallet } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'createWallet',
+        message: 'Create a main wallet?',
+        default: true,
+      },
+    ]);
+    
+    if (!createWallet) {
+      console.log(chalk.dim('Cancelled.\n'));
+      return;
+    }
+    
+    // Create main wallet
+    const { password } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Create master password (min 8 chars):',
+        mask: '*',
+        validate: (input) => input.length >= 8 || 'Password must be at least 8 characters',
+      },
+    ]);
+    
+    await walletManager.initialize(password);
+    mainWallet = walletManager.generateMainWallet();
+    await storage.setMainWallet(mainWallet);
+    
+    console.log(chalk.green(`\n✓ Main wallet created: ${mainWallet.address}`));
+    console.log(chalk.yellow('⚠️  Save this address - you need to fund it with ETH\n'));
     return;
   }
 
