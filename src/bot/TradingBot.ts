@@ -51,11 +51,11 @@ export class TradingBot {
       transport: http(this.rpcUrl),
     });
 
-    // Get wallet client
+    // Get wallet client - extends publicActions for waitForTransactionReceipt
     if (this.instance.useMainWallet) {
-      this.walletClient = this.walletManager.getMainWalletClient(this.rpcUrl) as any;
+      this.walletClient = this.walletManager.getMainWalletClient(this.rpcUrl) as WalletClient & { waitForTransactionReceipt: any };
     } else {
-      this.walletClient = this.walletManager.getBotWalletClient(this.instance.id, this.rpcUrl) as any;
+      this.walletClient = this.walletManager.getBotWalletClient(this.instance.id, this.rpcUrl) as WalletClient & { waitForTransactionReceipt: any };
     }
 
     // Initialize positions if empty
@@ -295,7 +295,7 @@ export class TradingBot {
       console.log(`   Executing transaction...`);
 
       // Send transaction
-      const txHash = await this.walletClient!.sendTransaction({
+      const txHash = await (this.walletClient as any).sendTransaction({
         to: quote.to as `0x${string}`,
         data: quote.data as `0x${string}`,
         value: BigInt(quote.value),
@@ -352,7 +352,7 @@ export class TradingBot {
       console.log(`   Checking token approval...`);
       const allowanceTarget = quote.allowanceTarget || quote.to;
       
-      const currentAllowance = await this.publicClient.readContract({
+      const currentAllowance = await (this.publicClient as any).readContract({
         address: this.instance.tokenAddress as `0x${string}`,
         abi: erc20Abi,
         functionName: 'allowance',
@@ -374,7 +374,7 @@ export class TradingBot {
       if (BigInt(currentAllowance) < BigInt(tokenAmount)) {
         console.log(`   Approving ${allowanceTarget.slice(0, 20)}... to spend tokens...`);
         
-        const approveTx = await this.walletClient!.writeContract({
+        const approveTx = await (this.walletClient as any).writeContract({
           address: this.instance.tokenAddress as `0x${string}`,
           abi: erc20Abi,
           functionName: 'approve',
@@ -390,7 +390,7 @@ export class TradingBot {
       console.log(`   Executing sell transaction...`);
 
       // Send transaction
-      const txHash = await this.walletClient!.sendTransaction({
+      const txHash = await (this.walletClient as any).sendTransaction({
         to: quote.to as `0x${string}`,
         data: quote.data as `0x${string}`,
         value: BigInt(quote.value || '0'),
