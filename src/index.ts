@@ -760,11 +760,8 @@ async function manageWallets(walletManager: WalletManager, storage: JsonStorage)
 
       try {
         const privateKey = walletManager.exportPrivateKey(walletId);
-        const walletIdInfo = walletManager.getWalletIdForAddress(
-          walletId === 'main' ? mainWallet.address : walletDictionary[walletId].address
-        );
 
-        console.log(chalk.cyan('\n🔑 Private Key:'));
+        console.log(chalk.cyan('\n🔑 Private Key:');
         console.log(chalk.green(privateKey));
         console.log(chalk.cyan('\n📍 Address:'));
         console.log(chalk.green(
@@ -865,7 +862,7 @@ async function reclaimFunds(walletManager: WalletManager, storage: JsonStorage) 
   console.log(chalk.yellow('Note: Tokens were not sold. Use TradingBot liquidation to sell tokens first.'));
 }
 
-async function getBotEthBalance(walletManager: WalletManager, bot: BotInstance): Promise<string> {
+async function getBotEthBalance(_walletManager: WalletManager, bot: BotInstance): Promise<string> {
   try {
     const { createPublicClient, http, formatEther } = await import('viem');
     const { base } = await import('viem/chains');
@@ -886,7 +883,7 @@ async function getBotEthBalance(walletManager: WalletManager, bot: BotInstance):
 }
 
 async function reclaimBotEth(walletManager: WalletManager, storage: JsonStorage, bot: BotInstance, mainAddress: string): Promise<boolean> {
-  const { createWalletClient, http, parseEther, formatEther } = await import('viem');
+  const { createWalletClient, http, parseEther } = await import('viem');
   const { base } = await import('viem/chains');
   const { createPublicClient } = await import('viem');
   
