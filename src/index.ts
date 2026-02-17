@@ -76,7 +76,7 @@ async function main() {
           await fundWallet(walletManager, storage);
           break;
         case 'send_external':
-          await sendToExternalWallet(walletManager);
+          await sendToExternalWallet(walletManager, storage);
           break;
         case 'reclaim':
           await reclaimFunds(walletManager, storage);
@@ -408,8 +408,32 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
   }
 }
 
-async function sendToExternalWallet(walletManager: WalletManager) {
+async function sendToExternalWallet(walletManager: WalletManager, storage: JsonStorage) {
   console.log(chalk.cyan('\n📤 Send to External Wallet\n'));
+
+  // Initialize wallet manager with password
+  const mainWallet = await storage.getMainWallet();
+  if (!mainWallet) {
+    console.log(chalk.red('No main wallet found. Create a bot first.\n'));
+    return;
+  }
+
+  const { password } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Enter master password:',
+      mask: '*',
+    },
+  ]);
+
+  try {
+    await walletManager.initialize(password);
+    walletManager.importData({ mainWallet, walletDictionary: await storage.getWalletDictionary() });
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
+    return;
+  }
 
   // Show main wallet address
   const mainAccount = walletManager.getMainAccount();
