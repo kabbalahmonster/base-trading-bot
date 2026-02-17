@@ -570,11 +570,6 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
     console.log(chalk.green(`\n✓ Transaction sent: ${txHash}`));
     console.log(chalk.dim('Waiting for confirmation...'));
 
-    const publicClient = createPublicClient({
-      chain: base,
-      transport: http(RPC_URL),
-    });
-
     await publicClient.waitForTransactionReceipt({ hash: txHash });
     console.log(chalk.green(`✓ Sent ${amount} ETH to ${recipient.slice(0, 10)}... successfully!\n`));
 
@@ -823,7 +818,7 @@ async function manageWallets(walletManager: WalletManager, storage: JsonStorage)
       try {
         const privateKey = walletManager.exportPrivateKey(walletId);
 
-        console.log(chalk.cyan('\n🔑 Private Key:');
+        console.log(chalk.cyan('\n🔑 Private Key:'));
         console.log(chalk.green(privateKey));
         console.log(chalk.cyan('\n📍 Address:'));
         console.log(chalk.green(
