@@ -540,6 +540,20 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
     const { base } = await import('viem/chains');
 
     const account = walletManager.getAccountForAddress(fromWallet);
+    
+    // Debug: verify account address matches
+    if (account.address.toLowerCase() !== fromWallet.toLowerCase()) {
+      console.log(chalk.red(`\n✗ Address mismatch!`));
+      console.log(chalk.yellow(`  Expected: ${fromWallet}`));
+      console.log(chalk.yellow(`  Got: ${account.address}\n`));
+      return;
+    }
+    
+    // Check actual balance before sending
+    const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL) });
+    const actualBalance = await publicClient.getBalance({ address: account.address });
+    console.log(chalk.dim(`Verifying balance: ${Number(actualBalance) / 1e18} ETH`));
+    
     const walletClient = createWalletClient({
       account,
       chain: base,
@@ -565,7 +579,16 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
     console.log(chalk.green(`✓ Sent ${amount} ETH to ${recipient.slice(0, 10)}... successfully!\n`));
 
   } catch (error: any) {
-    console.log(chalk.red(`\n✗ Transaction failed: ${error.message}\n`));
+    console.log(chalk.red(`\n✗ Transaction failed: ${error.message}`));
+    if (error.message?.includes('insufficient funds')) {
+      console.log(chalk.yellow(`\n💡 Troubleshooting:`));
+      console.log(chalk.yellow(`  1. Check the wallet address on Basescan`));
+      console.log(chalk.yellow(`  2. Verify you're on Base mainnet (chainId: 8453)`));
+      console.log(chalk.yellow(`  3. Try a smaller amount to reserve more gas`));
+      console.log(chalk.yellow(`  4. The RPC might be out of sync - try again in 30 seconds\n`));
+    } else {
+      console.log();
+    }
   }
 }
 
