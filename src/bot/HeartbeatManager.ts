@@ -1,7 +1,7 @@
 // src/bot/HeartbeatManager.ts
 
 import { TradingBot } from './TradingBot';
-import { BotInstance, HeartbeatContext } from '../types';
+import { BotInstance } from '../types';
 import { WalletManager } from '../wallet/WalletManager';
 import { ZeroXApi } from '../api/ZeroXApi';
 import { JsonStorage } from '../storage/JsonStorage';
