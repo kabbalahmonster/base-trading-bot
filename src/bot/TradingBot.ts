@@ -23,6 +23,9 @@ export class TradingBot {
   private walletClient: WalletClient | null = null;
   private publicClient: any = null;
   private isRunning: boolean = false;
+  private dryRun: boolean = false;
+  private consecutiveErrors: number = 0;
+  private maxConsecutiveErrors: number = 5;
 
   constructor(
     instance: BotInstance,
@@ -209,145 +212,6 @@ export class TradingBot {
   }
 
   /**
-   * Execute buy transaction
-   */
-  private async executeBuy(position: Position, ethAmount: string): Promise<TradeResult> {
-    try {
-      const amountWei = parseEther(ethAmount);
-      
-      console.log(`   Getting 0x quote for ${ethAmount} ETH...`);
-      const quote = await this.zeroXApi.getBuyQuote(
-        this.instance.tokenAddress,
-        amountWei.toString(),
-        this.instance.walletAddress
-      );
-
-      if (!quote) {
-        return { success: false, error: 'No quote available from 0x' };
-      }
-
-      console.log(`   Expected tokens: ${formatEther(BigInt(quote.buyAmount))}`);
-      console.log(`   Executing transaction...`);
-
-      // Send transaction
-      const txHash = await this.walletClient!.sendTransaction({
-        to: quote.to as `0x${string}`,
-        data: quote.data as `0x${string}`,
-        value: BigInt(quote.value),
-        gas: BigInt(quote.gas),
-        gasPrice: BigInt(quote.gasPrice),
-        chain: base,
-      });
-
-      console.log(`   Transaction sent: ${txHash}`);
-
-      // Wait for receipt
-      const receipt = await this.walletClient!.waitForTransactionReceipt({ hash: txHash });
-
-      if (receipt.status === 'success') {
-        // Update position
-        position.status = 'HOLDING';
-        position.buyTxHash = txHash;
-        position.buyTimestamp = Date.now();
-        position.tokensReceived = quote.buyAmount;
-        position.ethCost = amountWei.toString();
-
-        return {
-          success: true,
-          txHash,
-          gasUsed: receipt.gasUsed,
-          gasCostEth: (receipt.gasUsed * BigInt(quote.gasPrice)).toString(),
-        };
-      } else {
-        return { success: false, error: 'Transaction reverted' };
-      }
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Execute sell transaction with approval check
-   */
-  private async executeSell(position: Position, tokenAmount: string, quote: any): Promise<TradeResult> {
-    try {
-      // Check and handle token approval
-      console.log(`   Checking token approval...`);
-      const allowanceTarget = quote.allowanceTarget || quote.to;
-      
-      const currentAllowance = await this.publicClient.readContract({
-        address: this.instance.tokenAddress as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [this.instance.walletAddress as `0x${string}`, allowanceTarget as `0x${string}`],
-      });
-
-      if (BigInt(currentAllowance) < BigInt(tokenAmount)) {
-        console.log(`   Approving ${allowanceTarget.slice(0, 20)}... to spend tokens...`);
-        
-        const approveTx = await this.walletClient!.writeContract({
-          address: this.instance.tokenAddress as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'approve',
-          args: [allowanceTarget as `0x${string}`, BigInt(tokenAmount)],
-          chain: base,
-        });
-
-        await this.walletClient!.waitForTransactionReceipt({ hash: approveTx });
-        console.log(`   ✓ Approval confirmed`);
-      } else {
-        console.log(`   ✓ Sufficient allowance already granted`);
-      }
-
-      console.log(`   Executing sell transaction...`);
-
-      // Send transaction
-      const txHash = await this.walletClient!.sendTransaction({
-        to: quote.to as `0x${string}`,
-        data: quote.data as `0x${string}`,
-        value: BigInt(quote.value || '0'),
-        gas: BigInt(quote.gas),
-        gasPrice: BigInt(quote.gasPrice),
-        chain: base,
-      });
-
-      console.log(`   Transaction sent: ${txHash}`);
-
-      // Wait for receipt
-      const receipt = await this.walletClient!.waitForTransactionReceipt({ hash: txHash });
-
-      if (receipt.status === 'success') {
-        // Calculate profit
-        const ethReceived = BigInt(quote.buyAmount);
-        const gasCost = receipt.gasUsed * BigInt(quote.gasPrice);
-        const netEth = ethReceived - gasCost;
-        const ethCost = BigInt(position.ethCost || '0');
-        const profit = netEth > ethCost ? netEth - ethCost : BigInt(0);
-        const profitPercent = ethCost > 0 ? Number((profit * BigInt(10000)) / ethCost) / 100 : 0;
-
-        // Update position
-        position.status = 'SOLD';
-        position.sellTxHash = txHash;
-        position.sellTimestamp = Date.now();
-        position.ethReceived = ethReceived.toString();
-        position.profitEth = profit.toString();
-        position.profitPercent = profitPercent;
-
-        return {
-          success: true,
-          txHash,
-          gasUsed: receipt.gasUsed,
-          gasCostEth: gasCost.toString(),
-        };
-      } else {
-        return { success: false, error: 'Transaction reverted' };
-      }
-    } catch (error: any) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
    * Get current token price from 0x API
    */
   private async getCurrentPrice(): Promise<number> {
@@ -386,6 +250,301 @@ export class TradingBot {
       address: this.instance.walletAddress as `0x${string}`,
     });
     return Number(formatEther(balance));
+  }
+
+  /**
+   * Enable or disable dry-run mode
+   */
+  setDryRun(enabled: boolean): void {
+    this.dryRun = enabled;
+    console.log(`🧪 Dry-run mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
+  }
+
+  /**
+   * Execute buy transaction with dry-run support
+   */
+  private async executeBuy(position: Position, ethAmount: string): Promise<TradeResult> {
+    try {
+      const amountWei = parseEther(ethAmount);
+      
+      console.log(`   Getting 0x quote for ${ethAmount} ETH...`);
+      const quote = await this.zeroXApi.getBuyQuote(
+        this.instance.tokenAddress,
+        amountWei.toString(),
+        this.instance.walletAddress
+      );
+
+      if (!quote) {
+        return { success: false, error: 'No quote available from 0x' };
+      }
+
+      console.log(`   Expected tokens: ${formatEther(BigInt(quote.buyAmount))}`);
+
+      // Dry-run: simulate without sending
+      if (this.dryRun) {
+        console.log(`   🧪 DRY-RUN: Would buy ${formatEther(BigInt(quote.buyAmount))} tokens`);
+        console.log(`   🧪 DRY-RUN: TX data ready (not sending)`);
+        return {
+          success: true,
+          txHash: '0xDRYRUN_' + Date.now(),
+          gasUsed: BigInt(quote.gas),
+          gasCostEth: (BigInt(quote.gas) * BigInt(quote.gasPrice)).toString(),
+        };
+      }
+
+      console.log(`   Executing transaction...`);
+
+      // Send transaction
+      const txHash = await this.walletClient!.sendTransaction({
+        to: quote.to as `0x${string}`,
+        data: quote.data as `0x${string}`,
+        value: BigInt(quote.value),
+        gas: BigInt(quote.gas),
+        gasPrice: BigInt(quote.gasPrice),
+        chain: base,
+      });
+
+      console.log(`   Transaction sent: ${txHash}`);
+
+      // Wait for receipt
+      const receipt = await this.walletClient!.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        // Reset error counter on success
+        this.consecutiveErrors = 0;
+        
+        // Update position
+        position.status = 'HOLDING';
+        position.buyTxHash = txHash;
+        position.buyTimestamp = Date.now();
+        position.tokensReceived = quote.buyAmount;
+        position.ethCost = amountWei.toString();
+
+        return {
+          success: true,
+          txHash,
+          gasUsed: receipt.gasUsed,
+          gasCostEth: (receipt.gasUsed * BigInt(quote.gasPrice)).toString(),
+        };
+      } else {
+        this.consecutiveErrors++;
+        return { success: false, error: 'Transaction reverted' };
+      }
+    } catch (error: any) {
+      this.consecutiveErrors++;
+      console.error(`   Buy error: ${error.message}`);
+      
+      // Stop bot if too many consecutive errors
+      if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
+        console.error(`❌ Too many errors (${this.consecutiveErrors}). Stopping bot.`);
+        this.stop();
+      }
+      
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Execute sell transaction with approval check and dry-run support
+   */
+  private async executeSell(position: Position, tokenAmount: string, quote: any): Promise<TradeResult> {
+    try {
+      // Check and handle token approval
+      console.log(`   Checking token approval...`);
+      const allowanceTarget = quote.allowanceTarget || quote.to;
+      
+      const currentAllowance = await this.publicClient.readContract({
+        address: this.instance.tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'allowance',
+        args: [this.instance.walletAddress as `0x${string}`, allowanceTarget as `0x${string}`],
+      });
+
+      // Dry-run: skip approval check
+      if (this.dryRun) {
+        console.log(`   🧪 DRY-RUN: Would approve ${allowanceTarget.slice(0, 20)}...`);
+        console.log(`   🧪 DRY-RUN: Would sell ${formatEther(BigInt(tokenAmount))} tokens`);
+        return {
+          success: true,
+          txHash: '0xDRYRUN_SELL_' + Date.now(),
+          gasUsed: BigInt(quote.gas),
+          gasCostEth: (BigInt(quote.gas) * BigInt(quote.gasPrice)).toString(),
+        };
+      }
+
+      if (BigInt(currentAllowance) < BigInt(tokenAmount)) {
+        console.log(`   Approving ${allowanceTarget.slice(0, 20)}... to spend tokens...`);
+        
+        const approveTx = await this.walletClient!.writeContract({
+          address: this.instance.tokenAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [allowanceTarget as `0x${string}`, BigInt(tokenAmount)],
+          chain: base,
+        });
+
+        await this.walletClient!.waitForTransactionReceipt({ hash: approveTx });
+        console.log(`   ✓ Approval confirmed`);
+      } else {
+        console.log(`   ✓ Sufficient allowance already granted`);
+      }
+
+      console.log(`   Executing sell transaction...`);
+
+      // Send transaction
+      const txHash = await this.walletClient!.sendTransaction({
+        to: quote.to as `0x${string}`,
+        data: quote.data as `0x${string}`,
+        value: BigInt(quote.value || '0'),
+        gas: BigInt(quote.gas),
+        gasPrice: BigInt(quote.gasPrice),
+        chain: base,
+      });
+
+      console.log(`   Transaction sent: ${txHash}`);
+
+      // Wait for receipt
+      const receipt = await this.walletClient!.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status === 'success') {
+        // Reset error counter on success
+        this.consecutiveErrors = 0;
+        
+        // Calculate profit
+        const ethReceived = BigInt(quote.buyAmount);
+        const gasCost = receipt.gasUsed * BigInt(quote.gasPrice);
+        const netEth = ethReceived - gasCost;
+        const ethCost = BigInt(position.ethCost || '0');
+        const profit = netEth > ethCost ? netEth - ethCost : BigInt(0);
+        const profitPercent = ethCost > 0 ? Number((profit * BigInt(10000)) / ethCost) / 100 : 0;
+
+        // Update position
+        position.status = 'SOLD';
+        position.sellTxHash = txHash;
+        position.sellTimestamp = Date.now();
+        position.ethReceived = ethReceived.toString();
+        position.profitEth = profit.toString();
+        position.profitPercent = profitPercent;
+
+        return {
+          success: true,
+          txHash,
+          gasUsed: receipt.gasUsed,
+          gasCostEth: gasCost.toString(),
+        };
+      } else {
+        this.consecutiveErrors++;
+        return { success: false, error: 'Transaction reverted' };
+      }
+    } catch (error: any) {
+      this.consecutiveErrors++;
+      console.error(`   Sell error: ${error.message}`);
+      
+      // Stop bot if too many consecutive errors
+      if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
+        console.error(`❌ Too many errors (${this.consecutiveErrors}). Stopping bot.`);
+        this.stop();
+      }
+      
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Liquidate all holding positions (emergency exit)
+   */
+  async liquidateAll(): Promise<{ success: number; failed: number; totalProfit: string }> {
+    console.log(`\n🚨 LIQUIDATING ALL POSITIONS for ${this.instance.name}`);
+    
+    const holdingPositions = this.instance.positions.filter(p => p.status === 'HOLDING');
+    console.log(`   Found ${holdingPositions.length} positions to sell`);
+    
+    let success = 0;
+    let failed = 0;
+    let totalProfit = BigInt(0);
+
+    for (const position of holdingPositions) {
+      if (!position.tokensReceived) continue;
+
+      console.log(`\n   Selling position ${position.id}...`);
+      
+      // Calculate moon bag if enabled
+      let sellAmount = position.tokensReceived;
+      if (this.instance.config.moonBagEnabled) {
+        const moonBagAmount = (BigInt(sellAmount) * BigInt(this.instance.config.moonBagPercent)) / BigInt(100);
+        sellAmount = (BigInt(sellAmount) - moonBagAmount).toString();
+      }
+
+      try {
+        const quote = await this.zeroXApi.getSellQuote(
+          this.instance.tokenAddress,
+          sellAmount,
+          this.instance.walletAddress
+        );
+
+        if (!quote) {
+          console.log(`   ❌ No quote for position ${position.id}`);
+          failed++;
+          continue;
+        }
+
+        const result = await this.executeSell(position, sellAmount, quote);
+
+        if (result.success) {
+          success++;
+          totalProfit += BigInt(position.profitEth || '0');
+          console.log(`   ✅ Sold position ${position.id}`);
+        } else {
+          failed++;
+          console.log(`   ❌ Failed to sell position ${position.id}: ${result.error}`);
+        }
+      } catch (error: any) {
+        failed++;
+        console.error(`   ❌ Error selling position ${position.id}: ${error.message}`);
+      }
+    }
+
+    this.instance.totalProfitEth = (BigInt(this.instance.totalProfitEth) + totalProfit).toString();
+    await this.storage.saveBot(this.instance);
+
+    console.log(`\n📊 Liquidation complete:`);
+    console.log(`   ✅ Successful: ${success}`);
+    console.log(`   ❌ Failed: ${failed}`);
+    console.log(`   💰 Total profit: ${formatEther(totalProfit)} ETH`);
+
+    return {
+      success,
+      failed,
+      totalProfit: totalProfit.toString(),
+    };
+  }
+
+  /**
+   * Get bot statistics
+   */
+  getStats(): {
+    name: string;
+    positions: { empty: number; holding: number; sold: number };
+    totalBuys: number;
+    totalSells: number;
+    totalProfitEth: string;
+    currentPrice: number;
+    isRunning: boolean;
+  } {
+    const positions = this.instance.positions;
+    return {
+      name: this.instance.name,
+      positions: {
+        empty: positions.filter(p => p.status === 'EMPTY').length,
+        holding: positions.filter(p => p.status === 'HOLDING').length,
+        sold: positions.filter(p => p.status === 'SOLD').length,
+      },
+      totalBuys: this.instance.totalBuys,
+      totalSells: this.instance.totalSells,
+      totalProfitEth: this.instance.totalProfitEth,
+      currentPrice: this.instance.currentPrice,
+      isRunning: this.isRunning,
+    };
   }
 
   stop(): void {
