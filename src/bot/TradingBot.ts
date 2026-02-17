@@ -121,15 +121,26 @@ export class TradingBot {
     console.log(`\n🎯 Buy opportunity found: Position ${position.id} at ${GridCalculator.formatPrice(position.buyPrice)} ETH`);
 
     // Calculate buy amount
-    const ethBalance = await this.getEthBalance();
-    const minReserve = 0.0005; // Keep some ETH for gas
-    const availableEth = Math.max(0, ethBalance - minReserve);
+    let buyAmountEth: number;
     
-    // Distribute equally across remaining positions
-    const remainingPositions = this.instance.positions.filter(p => p.status === 'EMPTY').length;
-    const buyAmountEth = remainingPositions > 0 
-      ? availableEth / Math.max(1, remainingPositions - activeCount)
-      : availableEth;
+    if (this.instance.config.useFixedBuyAmount && this.instance.config.buyAmount > 0) {
+      // Use fixed buy amount
+      buyAmountEth = this.instance.config.buyAmount;
+      console.log(`   Using fixed buy amount: ${buyAmountEth} ETH`);
+    } else {
+      // Auto-calculate based on available balance
+      const ethBalance = await this.getEthBalance();
+      const minReserve = 0.0005; // Keep some ETH for gas
+      const availableEth = Math.max(0, ethBalance - minReserve);
+      
+      // Distribute equally across remaining positions
+      const remainingPositions = this.instance.positions.filter(p => p.status === 'EMPTY').length;
+      buyAmountEth = remainingPositions > 0 
+        ? availableEth / Math.max(1, remainingPositions - activeCount)
+        : availableEth;
+      
+      console.log(`   Auto-calculated buy amount: ${buyAmountEth.toFixed(6)} ETH`);
+    }
 
     // Check minimum ETH
     if (buyAmountEth < 0.0001) {

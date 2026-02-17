@@ -252,6 +252,20 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     },
     {
       type: 'confirm',
+      name: 'useFixedBuyAmount',
+      message: 'Use fixed ETH amount per buy?',
+      default: false,
+    },
+    {
+      type: 'input',
+      name: 'buyAmount',
+      message: 'ETH amount per buy (e.g., 0.001):',
+      default: '0.001',
+      when: (answers) => answers.useFixedBuyAmount,
+      validate: (input) => !isNaN(parseFloat(input)) && parseFloat(input) > 0 || 'Invalid amount',
+    },
+    {
+      type: 'confirm',
       name: 'startImmediately',
       message: 'Start bot immediately?',
       default: false,
@@ -282,6 +296,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     moonBagPercent: 1,
     minProfitPercent: 2,
     maxActivePositions: answers.maxActivePositions,
+    useFixedBuyAmount: answers.useFixedBuyAmount || false,
+    buyAmount: answers.useFixedBuyAmount ? parseFloat(answers.buyAmount || '0.001') : 0,
     heartbeatMs: 1000,
     skipHeartbeats: 0,
   };
@@ -477,7 +493,10 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
     for (const bot of bots) {
       const enabledStatus = bot.enabled ? chalk.green('✓') : chalk.red('✗');
       const runningStatus = bot.isRunning ? chalk.green('● RUNNING') : chalk.gray('○ Stopped');
-      console.log(`  ${enabledStatus} ${bot.name}: ${runningStatus} ${!bot.enabled ? chalk.red('[DISABLED]') : ''}`);
+      const buyAmountInfo = bot.config.useFixedBuyAmount 
+        ? chalk.dim(`[${bot.config.buyAmount} ETH/buy]`) 
+        : chalk.dim('[auto-buy]');
+      console.log(`  ${enabledStatus} ${bot.name}: ${runningStatus} ${buyAmountInfo} ${!bot.enabled ? chalk.red('[DISABLED]') : ''}`);
     }
     console.log();
   }

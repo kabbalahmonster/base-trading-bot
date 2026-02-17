@@ -24,6 +24,10 @@ export interface GridConfig {
   minProfitPercent: number;    // Default: 2% (after gas)
   maxActivePositions: number;  // Default: 4
   
+  // Buy amount settings
+  buyAmount: number;           // ETH amount per buy (0 = auto-calculate)
+  useFixedBuyAmount: boolean;  // Default: false (auto-calculate based on balance)
+  
   // Timing
   heartbeatMs: number;         // Default: 1000ms
   skipHeartbeats: number;      // Default: 0 (run every heartbeat)
