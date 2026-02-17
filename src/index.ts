@@ -84,7 +84,7 @@ async function main() {
 
   const walletManager = new WalletManager();
   const zeroXApi = new ZeroXApi(ZEROX_API_KEY);
-  
+
   // Initialize PnL Tracker with storage (JsonStorage now includes trade history)
   const pnLTracker = new PnLTracker(storage);
   await pnLTracker.init();
@@ -94,6 +94,43 @@ async function main() {
   notificationService.initializeFromEnv();
   if (notificationService.isConfigured()) {
     console.log(chalk.green('✓ Telegram notifications configured'));
+  }
+
+  // Helper to ensure wallet is initialized
+  async function ensureWalletInitialized(): Promise<boolean> {
+    const walletDictionary = await storage.getWalletDictionary();
+    const hasWallets = Object.keys(walletDictionary).length > 0;
+
+    if (!hasWallets) {
+      console.log(chalk.yellow('\nNo wallets found. Create a wallet first.\n'));
+      return false;
+    }
+
+    // Check if wallet manager is already initialized
+    try {
+      walletManager.getMainAccount();
+      return true;
+    } catch {
+      // Need to initialize
+      const { password } = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'password',
+          message: 'Enter master password:',
+          mask: '*',
+        },
+      ]);
+
+      try {
+        await walletManager.initialize(password);
+        const primaryWalletId = await storage.getPrimaryWalletId();
+        walletManager.importData({ walletDictionary, primaryWalletId });
+        return true;
+      } catch (error: any) {
+        console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
+        return false;
+      }
+    }
   }
 
   const heartbeatManager = new HeartbeatManager(
@@ -159,7 +196,7 @@ async function main() {
           await createBot(storage, walletManager);
           break;
         case 'start':
-          await startBot(heartbeatManager, storage);
+          await startBot(heartbeatManager, storage, ensureWalletInitialized);
           break;
         case 'stop':
           await stopBot(heartbeatManager, storage);
@@ -411,7 +448,12 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
   }
 }
 
-async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage) {
+async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage, ensureWalletInitialized: () => Promise<boolean>) {
+  // Ensure wallet is initialized before starting bots
+  if (!await ensureWalletInitialized()) {
+    return;
+  }
+
   const bots = await storage.getAllBots();
   if (bots.length === 0) {
     console.log(chalk.yellow('\nNo bots found. Create one first.\n'));

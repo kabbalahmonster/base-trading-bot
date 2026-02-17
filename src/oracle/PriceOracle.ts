@@ -7,23 +7,28 @@ import { base } from 'viem/chains';
 import { ChainlinkFeed, ChainlinkPriceData } from './ChainlinkFeed.js';
 import { UniswapV3TWAP, TWAPResult, DEFAULT_TWAP_SECONDS } from './UniswapV3TWAP.js';
 
+export type Currency = 'USD' | 'CAD' | 'ETH';
+
 export interface PriceOracleConfig {
   // RPC configuration
   rpcUrl?: string;
-  
+
   // Price source preferences
   preferChainlink?: boolean;      // Default: true
   preferTWAP?: boolean;           // Default: false (Chainlink preferred)
-  
+
+  // Currency settings
+  currency?: Currency;            // Default: 'USD'
+
   // Confidence thresholds
   minConfidence?: number;         // Default: 0.8 (80%)
-  
+
   // TWAP configuration
   twapSeconds?: number;           // Default: 1800 (30 minutes)
-  
+
   // Chainlink configuration
   chainlinkStaleThresholdMs?: number; // Default: 3600000 (1 hour)
-  
+
   // Fallback behavior
   allowFallback?: boolean;        // Default: true
   requireBothSources?: boolean;   // Default: false
@@ -64,6 +69,7 @@ export class PriceOracle {
       rpcUrl: config.rpcUrl ?? 'https://mainnet.base.org',
       preferChainlink: config.preferChainlink ?? true,
       preferTWAP: config.preferTWAP ?? false,
+      currency: config.currency ?? 'USD',
       minConfidence: config.minConfidence ?? 0.8,
       twapSeconds: config.twapSeconds ?? DEFAULT_TWAP_SECONDS,
       chainlinkStaleThresholdMs: config.chainlinkStaleThresholdMs ?? 60 * 60 * 1000,
@@ -308,20 +314,63 @@ export class PriceOracle {
   }
 
   /**
-   * Convert token price to USD
+   * Get CAD/USD conversion rate
    */
-  async getPriceInUsd(tokenAddress: string): Promise<PriceData | null> {
+  async getCadUsdRate(): Promise<number | null> {
+    try {
+      const cadData = await this.chainlink.getPrice('0x0000000000000000000000000000000000000000', 'CAD');
+      if (cadData && cadData.price > 0) {
+        return cadData.price; // CAD/USD rate
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get price in configured currency (USD or CAD)
+   */
+  async getPriceInCurrency(tokenAddress: string, currency?: Currency): Promise<PriceData | null> {
+    const targetCurrency = currency ?? this.config.currency ?? 'USD';
     const tokenPriceEth = await this.getPrice(tokenAddress);
     if (!tokenPriceEth) return null;
+
+    if (targetCurrency === 'ETH') {
+      return { ...tokenPriceEth, quoteToken: 'ETH' };
+    }
 
     const ethPriceUsd = await this.getEthPriceUsd();
     if (!ethPriceUsd) return null;
 
+    let priceInCurrency = tokenPriceEth.price * ethPriceUsd;
+
+    if (targetCurrency === 'CAD') {
+      const cadUsdRate = await this.getCadUsdRate();
+      if (cadUsdRate) {
+        priceInCurrency = priceInCurrency * cadUsdRate;
+      }
+    }
+
     return {
       ...tokenPriceEth,
-      price: tokenPriceEth.price * ethPriceUsd,
-      quoteToken: 'USD',
+      price: priceInCurrency,
+      quoteToken: targetCurrency,
     };
+  }
+
+  /**
+   * Convert token price to USD
+   */
+  async getPriceInUsd(tokenAddress: string): Promise<PriceData | null> {
+    return this.getPriceInCurrency(tokenAddress, 'USD');
+  }
+
+  /**
+   * Convert token price to CAD
+   */
+  async getPriceInCad(tokenAddress: string): Promise<PriceData | null> {
+    return this.getPriceInCurrency(tokenAddress, 'CAD');
   }
 
   /**

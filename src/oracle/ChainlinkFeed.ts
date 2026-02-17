@@ -23,6 +23,8 @@ export const CHAINLINK_FEEDS: Record<string, string> = {
   'LINK': '0xd9e6b1Eb6Dfa93aD4dD0E584E7bCefB0B8a6c96E', // LINK/USD
   'CBETH': '0x806b4Ac04501c29769051e42783cF04dCE41440b', // cbETH/USD
   'WSTETH': '0xc1F6C5B4E1F8f6E4b5E5c5E8B4E4b5E5c5E8B4E', // wstETH/USD (placeholder - verify on mainnet)
+  // CAD feed
+  'CAD': '0x0ffbdd5c6f249586f29e8da4b831952d63c3016d', // CAD/USD
 };
 
 // Token address to symbol mapping for feed lookup (all lowercase for case-insensitive matching)
@@ -153,6 +155,18 @@ export class ChainlinkFeed {
       return null;
     }
     return this.getLatestPrice(feedAddress);
+  }
+
+  /**
+   * Get price by symbol (e.g., 'ETH', 'CAD')
+   */
+  async getPrice(tokenAddress: string, symbol?: string): Promise<ChainlinkPriceData | null> {
+    // If symbol provided, use it directly
+    if (symbol && CHAINLINK_FEEDS[symbol]) {
+      return this.getLatestPrice(CHAINLINK_FEEDS[symbol]);
+    }
+    // Otherwise look up by address
+    return this.getPriceForToken(tokenAddress);
   }
 
   /**
