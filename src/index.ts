@@ -404,7 +404,7 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
   }
 }
 
-async function reclaimFunds(walletManager: WalletManager, storage: JsonStorage) {
+async function reclaimFunds(_walletManager: WalletManager, storage: JsonStorage) {
   console.log(chalk.cyan('\n🏧 Reclaim Funds\n'));
 
   const bots = await storage.getAllBots();

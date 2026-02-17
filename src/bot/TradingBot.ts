@@ -301,13 +301,12 @@ export class TradingBot {
         value: BigInt(quote.value),
         gas: BigInt(quote.gas),
         gasPrice: BigInt(quote.gasPrice),
-        chain: base,
       });
 
       console.log(`   Transaction sent: ${txHash}`);
 
-      // Wait for receipt
-      const receipt = await this.walletClient!.waitForTransactionReceipt({ hash: txHash });
+      // Wait for receipt using public client
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
 
       if (receipt.status === 'success') {
         // Reset error counter on success
@@ -380,10 +379,9 @@ export class TradingBot {
           abi: erc20Abi,
           functionName: 'approve',
           args: [allowanceTarget as `0x${string}`, BigInt(tokenAmount)],
-          chain: base,
         });
 
-        await this.walletClient!.waitForTransactionReceipt({ hash: approveTx });
+        await this.publicClient.waitForTransactionReceipt({ hash: approveTx });
         console.log(`   ✓ Approval confirmed`);
       } else {
         console.log(`   ✓ Sufficient allowance already granted`);
