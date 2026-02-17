@@ -95,6 +95,14 @@ export class NotificationService {
   }
 
   /**
+   * Send a simple text message (for daemon status, etc.)
+   */
+  async sendMessage(message: string): Promise<boolean> {
+    if (!this.notifier) return false;
+    return this.notifier.sendMessage(message);
+  }
+
+  /**
    * Send notification for a bot
    */
   async notify(bot: BotInstance, payload: Omit<NotificationPayload, 'botName'>): Promise<boolean> {

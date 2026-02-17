@@ -91,9 +91,9 @@ export class TelegramNotifier {
    */
   async sendTestMessage(): Promise<{ success: boolean; message: string }> {
     if (!this.config.botToken || !this.config.chatId) {
-      return { 
-        success: false, 
-        message: 'Configuration incomplete: missing bot token or chat ID' 
+      return {
+        success: false,
+        message: 'Configuration incomplete: missing bot token or chat ID'
       };
     }
 
@@ -111,6 +111,22 @@ export class TelegramNotifier {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return { success: false, message: `Failed to send test: ${errorMessage}` };
+    }
+  }
+
+  /**
+   * Send a simple text message (for daemon status, etc.)
+   */
+  async sendMessage(text: string): Promise<boolean> {
+    if (!this.isEnabled()) return false;
+
+    try {
+      await this.sendTelegramMessage(this.escapeHtml(text));
+      this.consecutiveFailures = 0;
+      return true;
+    } catch (error) {
+      this.handleError(error);
+      return false;
     }
   }
 

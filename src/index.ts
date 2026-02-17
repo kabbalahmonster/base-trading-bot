@@ -15,6 +15,7 @@ import { PriceOracle } from './oracle/index.js';
 import { formatEther, createPublicClient } from 'viem';
 import { randomUUID } from 'crypto';
 import { PnLTracker, CsvExporter } from './analytics/index.js';
+import { BotDaemon } from './daemon/BotDaemon.js';
 import { writeFileSync } from 'fs';
 import dotenv from 'dotenv';
 
@@ -121,6 +122,7 @@ async function main() {
           { name: '⏸️  Enable/Disable bot', value: 'toggle' },
           { name: '📊 View status', value: 'status' },
           { name: '📺 Monitor bots (live)', value: 'monitor' },
+          { name: '👁️  View daemon status', value: 'daemon_status' },
           { name: '📈 View P&L Report', value: 'pnl_report' },
           { name: '💰 Fund wallet', value: 'fund' },
           { name: '👛 View wallet balances', value: 'view_balances' },
@@ -132,12 +134,24 @@ async function main() {
           { name: '🔮 Oracle status', value: 'oracle_status' },
           { name: '⚡ Toggle price validation', value: 'toggle_price_validation' },
           { name: '🗑️  Delete bot', value: 'delete' },
-          { name: '❌ Exit', value: 'exit' },
+          { name: '⏻️  Exit (bots keep running)', value: 'exit_keep' },
+          { name: '⏹️  Exit and stop all bots', value: 'exit_stop' },
         ],
       },
     ]);
 
-    if (action === 'exit') break;
+    if (action === 'exit_keep') {
+      console.log(chalk.cyan('\n👋 Exiting CLI. Bots continue running in background.\n'));
+      console.log(chalk.dim('To stop bots later, restart and select "Exit and stop all bots"\n'));
+      break;
+    }
+    
+    if (action === 'exit_stop') {
+      console.log(chalk.yellow('\n⏹ Stopping all bots...\n'));
+      heartbeatManager.stop();
+      console.log(chalk.green('✓ All bots stopped\n'));
+      break;
+    }
 
     try {
       switch (action) {
@@ -161,6 +175,9 @@ async function main() {
           break;
         case 'monitor':
           await monitorBots(storage, heartbeatManager);
+          break;
+        case 'daemon_status':
+          await showDaemonStatus();
           break;
         case 'pnl_report':
           await showPnlReport(pnLTracker, storage);
@@ -3092,6 +3109,86 @@ async function togglePriceValidation(storage: JsonStorage, heartbeatManager: Hea
   }
 
   console.log(chalk.green(`\n✓ Price validation is now ${newStatus ? chalk.green('ENABLED') : chalk.red('DISABLED')} for ${bot.name}\n`));
+}
+
+/**
+ * Show daemon status
+ */
+async function showDaemonStatus() {
+  console.log(chalk.cyan('\n👁️  Daemon Status\n'));
+
+  const daemon = new BotDaemon();
+  const status = daemon.getStatus();
+
+  if (status.running) {
+    console.log(chalk.green('✓ Daemon is RUNNING'));
+    console.log(`  PID: ${status.pid}`);
+    if (status.uptime) {
+      console.log(`  Uptime: ${status.uptime}`);
+    }
+    console.log(chalk.dim('\nBots will continue trading even if you exit the CLI.\n'));
+    
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Daemon actions:',
+        choices: [
+          { name: '📋 View recent logs', value: 'logs' },
+          { name: '🔄 Restart daemon', value: 'restart' },
+          { name: '⏹️  Stop daemon', value: 'stop' },
+          { name: '⬅️  Back', value: 'back' },
+        ],
+      },
+    ]);
+
+    if (action === 'logs') {
+      console.log(chalk.dim('\n--- Recent Daemon Logs ---\n'));
+      console.log(daemon.getLogs(30));
+      console.log(chalk.dim('\n--- End of Logs ---\n'));
+    } else if (action === 'restart') {
+      daemon.restart();
+      console.log(chalk.yellow('\n🔄 Daemon restarting...\n'));
+    } else if (action === 'stop') {
+      const { confirm } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirm',
+          message: chalk.red('Stop the daemon? All bots will stop trading.'),
+          default: false,
+        },
+      ]);
+      if (confirm) {
+        daemon.stop();
+        console.log(chalk.yellow('\n⏹️  Daemon stopped\n'));
+      }
+    }
+  } else {
+    console.log(chalk.yellow('○ Daemon is NOT RUNNING'));
+    console.log(chalk.dim('\nBots will only trade while the CLI is open.\n'));
+    
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Daemon actions:',
+        choices: [
+          { name: '▶️  Start daemon', value: 'start' },
+          { name: '⬅️  Back', value: 'back' },
+        ],
+      },
+    ]);
+
+    if (action === 'start') {
+      const success = daemon.start();
+      if (success) {
+        console.log(chalk.green('\n▶️  Daemon started\n'));
+        console.log(chalk.dim('Bots will now continue trading in the background.\n'));
+      } else {
+        console.log(chalk.red('\n✗ Failed to start daemon\n'));
+      }
+    }
+  }
 }
 
 // Start the application
