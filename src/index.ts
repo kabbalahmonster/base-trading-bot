@@ -348,6 +348,7 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
 
 async function viewWalletBalances(storage: JsonStorage) {
   console.log(chalk.cyan('\n👛 Wallet Balances\n'));
+  console.log(chalk.dim(`Using RPC: ${RPC_URL}\n`));
 
   const mainWallet = await storage.getMainWallet();
   if (!mainWallet) {
@@ -366,6 +367,16 @@ async function viewWalletBalances(storage: JsonStorage) {
       transport: http(RPC_URL),
     });
 
+    // Verify chain connection
+    try {
+      const blockNumber = await publicClient.getBlockNumber();
+      console.log(chalk.dim(`Connected to Base. Block: ${blockNumber}\n`));
+    } catch (e: any) {
+      console.log(chalk.red(`⚠ RPC Connection failed: ${e.message}`));
+      console.log(chalk.yellow(`Try setting BASE_RPC_URL in .env file\n`));
+      return;
+    }
+
     // Check main wallet balance
     const mainBalance = await publicClient.getBalance({
       address: mainWallet.address as `0x${string}`,
@@ -373,7 +384,8 @@ async function viewWalletBalances(storage: JsonStorage) {
 
     console.log(chalk.green('Main Wallet:'));
     console.log(`  Address: ${mainWallet.address}`);
-    console.log(`  Balance: ${formatEther(mainBalance)} ETH\n`);
+    console.log(`  Balance: ${formatEther(mainBalance)} ETH`);
+    console.log(chalk.dim(`  Raw: ${mainBalance.toString()} wei\n`));
 
     // Check bot wallets
     if (Object.keys(walletDictionary).length > 0) {
