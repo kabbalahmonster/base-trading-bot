@@ -8,11 +8,8 @@ const CHAIN_ID = 8453; // Base
 
 export class ZeroXApi {
   private client: AxiosInstance;
-  private _apiKey?: string;
 
   constructor(apiKey?: string) {
-    this._apiKey = apiKey;
-    
     this.client = axios.create({
       baseURL: ZEROX_API_BASE,
       timeout: 30000,

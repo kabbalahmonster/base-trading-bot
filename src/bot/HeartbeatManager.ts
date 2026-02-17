@@ -126,12 +126,6 @@ export class HeartbeatManager {
     const shouldRun = (this.currentBotIndex % (skipCount + 1)) === 0;
 
     if (shouldRun) {
-      const _context: HeartbeatContext = {
-        currentBotIndex: this.currentBotIndex,
-        totalBots: botList.length,
-        timestamp: Date.now(),
-      };
-
       try {
         await bot.tick();
       } catch (error: any) {
