@@ -502,6 +502,26 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
   const bot = bots.find(b => b.id === botId);
   if (!bot) return;
 
+  console.log(chalk.cyan(`\nSelected: ${bot.name}`));
+  console.log(chalk.dim(`Wallet: ${bot.walletAddress}`));
+
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'What would you like to do?',
+      choices: [
+        { name: '💰 Enter amount to fund', value: 'fund' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (action === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
   const { amount } = await inquirer.prompt([
     {
       type: 'input',
