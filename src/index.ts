@@ -267,6 +267,7 @@ async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage
 
   const choices = bots.map(b => ({ name: `${b.name} (${b.tokenSymbol})`, value: b.id }));
   choices.unshift({ name: 'All bots', value: 'all' });
+  choices.push({ name: '⬅️  Back', value: 'back' });
 
   const { botId } = await inquirer.prompt([
     {
@@ -276,6 +277,11 @@ async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage
       choices,
     },
   ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
 
   if (botId === 'all') {
     for (const bot of bots) {
@@ -350,9 +356,17 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
       type: 'list',
       name: 'botId',
       message: 'Select bot to fund:',
-      choices: bots.map(b => ({ name: `${b.name} (${b.walletAddress.slice(0, 10)}...)`, value: b.id })),
+      choices: [
+        ...bots.map(b => ({ name: `${b.name} (${b.walletAddress.slice(0, 10)}...)`, value: b.id })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
     },
   ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
 
   const bot = bots.find(b => b.id === botId);
   if (!bot) return;
@@ -457,9 +471,17 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
       type: 'list',
       name: 'fromWallet',
       message: 'Select wallet to send from:',
-      choices: allWallets.map(w => ({ name: `${w.name}: ${w.address.slice(0, 12)}...`, value: w.address })),
+      choices: [
+        ...allWallets.map(w => ({ name: `${w.name}: ${w.address.slice(0, 12)}...`, value: w.address })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
     },
   ]);
+
+  if (fromWallet === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
 
   console.log(chalk.dim(`From: ${fromWallet}`));
 
@@ -629,9 +651,17 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
       type: 'list',
       name: 'fromWallet',
       message: 'Select wallet to send from:',
-      choices: allWallets.map(w => ({ name: `${w.name}: ${w.address.slice(0, 12)}...`, value: w.address })),
+      choices: [
+        ...allWallets.map(w => ({ name: `${w.name}: ${w.address.slice(0, 12)}...`, value: w.address })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
     },
   ]);
+
+  if (fromWallet === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
 
   const { tokenAddress, recipient, amount } = await inquirer.prompt([
     {
@@ -872,9 +902,15 @@ async function reclaimFunds(walletManager: WalletManager, storage: JsonStorage) 
       choices: [
         { name: 'All bots', value: 'all' },
         ...bots.map(b => ({ name: `${b.name} (${b.walletAddress.slice(0, 10)}...)`, value: b.id })),
+        { name: '⬅️  Back', value: 'back' },
       ],
     },
   ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
 
   const botsToReclaim = botId === 'all' ? bots : bots.filter(b => b.id === botId);
 
@@ -1003,9 +1039,17 @@ async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorag
       type: 'list',
       name: 'botId',
       message: 'Select bot to delete:',
-      choices: bots.map(b => ({ name: b.name, value: b.id })),
+      choices: [
+        ...bots.map(b => ({ name: b.name, value: b.id })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
     },
   ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
 
   const bot = bots.find(b => b.id === botId);
   if (!bot) return;
