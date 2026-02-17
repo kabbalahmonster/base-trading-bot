@@ -463,6 +463,40 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
 
   console.log(chalk.dim(`From: ${fromWallet}`));
 
+  // Check balance first
+  let balanceEth = '0';
+  let maxSendable = 0;
+  try {
+    const { createPublicClient, http, formatEther } = await import('viem');
+    const { base } = await import('viem/chains');
+    
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(RPC_URL),
+    });
+    
+    const balance = await publicClient.getBalance({
+      address: fromWallet as `0x${string}`,
+    });
+    
+    balanceEth = formatEther(balance);
+    console.log(chalk.cyan(`   Balance: ${balanceEth} ETH`));
+    
+    // Estimate gas (typically ~0.00001 ETH on Base)
+    const gasEstimate = 0.00001;
+    maxSendable = parseFloat(balanceEth) - gasEstimate;
+    
+    if (maxSendable <= 0) {
+      console.log(chalk.red(`\n✗ Insufficient balance. You need at least ${gasEstimate} ETH for gas.`));
+      console.log(chalk.yellow(`   Current balance: ${balanceEth} ETH\n`));
+      return;
+    }
+    
+    console.log(chalk.dim(`   Max sendable: ${Math.max(0, maxSendable).toFixed(6)} ETH (keeps ~${gasEstimate} ETH for gas)`));
+  } catch (error: any) {
+    console.log(chalk.yellow(`\n⚠ Could not check balance: ${error.message}`));
+  }
+
   const { recipient, amount } = await inquirer.prompt([
     {
       type: 'input',
@@ -475,7 +509,12 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
       name: 'amount',
       message: 'Amount of ETH to send:',
       default: '0.01',
-      validate: (input) => !isNaN(parseFloat(input)) && parseFloat(input) > 0 || 'Invalid amount',
+      validate: (input) => {
+        const val = parseFloat(input);
+        if (isNaN(val) || val <= 0) return 'Invalid amount';
+        if (maxSendable > 0 && val > maxSendable) return `Amount exceeds max sendable (${maxSendable.toFixed(6)} ETH)`;
+        return true;
+      },
     },
   ]);
 
