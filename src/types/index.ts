@@ -74,6 +74,7 @@ export interface BotInstance {
   
   // State
   isRunning: boolean;
+  enabled: boolean;          // Default: true (can be disabled without deleting)
   lastHeartbeat: number;
   currentPrice: number;
   

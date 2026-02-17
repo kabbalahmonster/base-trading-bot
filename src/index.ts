@@ -100,6 +100,7 @@ async function main() {
           { name: '🆕 Create new bot', value: 'create' },
           { name: '▶️  Start bot(s)', value: 'start' },
           { name: '⏹️  Stop bot(s)', value: 'stop' },
+          { name: '⏸️  Enable/Disable bot', value: 'toggle' },
           { name: '📊 View status', value: 'status' },
           { name: '💰 Fund wallet', value: 'fund' },
           { name: '👛 View wallet balances', value: 'view_balances' },
@@ -125,6 +126,9 @@ async function main() {
           break;
         case 'stop':
           await stopBot(heartbeatManager, storage);
+          break;
+        case 'toggle':
+          await toggleBotStatus(storage, heartbeatManager);
           break;
         case 'status':
           await showStatus(heartbeatManager, storage);
@@ -301,6 +305,7 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     totalProfitEth: '0',
     totalProfitUsd: 0,
     isRunning: false,
+    enabled: true,  // New bots are enabled by default
     lastHeartbeat: 0,
     currentPrice,
     createdAt: Date.now(),
@@ -323,8 +328,15 @@ async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage
     return;
   }
 
-  const choices = bots.map(b => ({ name: `${b.name} (${b.tokenSymbol})`, value: b.id }));
-  choices.unshift({ name: 'All bots', value: 'all' });
+  // Filter to only enabled bots
+  const enabledBots = bots.filter(b => b.enabled);
+  if (enabledBots.length === 0) {
+    console.log(chalk.yellow('\nNo enabled bots found. Enable a bot first.\n'));
+    return;
+  }
+
+  const choices = enabledBots.map(b => ({ name: `${b.name} (${b.tokenSymbol})`, value: b.id }));
+  choices.unshift({ name: 'All enabled bots', value: 'all' });
   choices.push({ name: '⬅️  Back', value: 'back' });
 
   const { botId } = await inquirer.prompt([
@@ -342,13 +354,13 @@ async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage
   }
 
   if (botId === 'all') {
-    for (const bot of bots) {
+    for (const bot of enabledBots) {
       if (!bot.isRunning) {
         await heartbeatManager.addBot(bot);
       }
     }
   } else {
-    const bot = bots.find(b => b.id === botId);
+    const bot = enabledBots.find(b => b.id === botId);
     if (bot && !bot.isRunning) {
       await heartbeatManager.addBot(bot);
     }
@@ -380,9 +392,78 @@ async function stopBot(heartbeatManager: HeartbeatManager, _storage: JsonStorage
   }
 }
 
+async function toggleBotStatus(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
+  console.log(chalk.cyan('\n⏸️  Enable/Disable Bot\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found.\n'));
+    return;
+  }
+
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to enable/disable:',
+      choices: [
+        ...bots.map(b => ({
+          name: `${b.enabled ? chalk.green('✓') : chalk.red('✗')} ${b.name} (${b.tokenSymbol}) - ${b.enabled ? 'Enabled' : 'Disabled'}`,
+          value: b.id,
+        })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  const bot = bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  const newStatus = !bot.enabled;
+  const action = newStatus ? 'enable' : 'disable';
+
+  console.log(chalk.yellow(`\n⚠️  About to ${action} bot: ${bot.name}`));
+  if (!newStatus && bot.isRunning) {
+    console.log(chalk.red('  This bot is currently running. It will be stopped.'));
+  }
+
+  const { confirm } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: `Confirm ${action}?`,
+      default: false,
+    },
+  ]);
+
+  if (!confirm) {
+    console.log(chalk.yellow('Cancelled.\n'));
+    return;
+  }
+
+  // Update bot status
+  bot.enabled = newStatus;
+  bot.lastUpdated = Date.now();
+  await storage.saveBot(bot);
+
+  // If disabling and bot is running, stop it
+  if (!newStatus && bot.isRunning) {
+    heartbeatManager.removeBot(bot.id);
+    console.log(chalk.yellow(`  Stopped running bot: ${bot.name}`));
+  }
+
+  console.log(chalk.green(`\n✓ Bot ${bot.name} is now ${newStatus ? chalk.green('ENABLED') : chalk.red('DISABLED')}\n`));
+}
+
 async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStorage) {
   const stats = await storage.getGlobalStats();
   const status = heartbeatManager.getStatus();
+  const bots = await storage.getAllBots();
 
   console.log(chalk.cyan('\n📊 System Status\n'));
   console.log(`Heartbeat: ${status.isRunning ? chalk.green('RUNNING') : chalk.red('STOPPED')}`);
@@ -391,10 +472,12 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
   console.log(`Total profit: ${formatEther(BigInt(stats.totalProfitEth))} ETH`);
   console.log(`Total trades: ${stats.totalTrades}\n`);
 
-  if (status.bots.length > 0) {
-    console.log(chalk.cyan('Active Bots:\n'));
-    for (const bot of status.bots) {
-      console.log(`  ${bot.name}: ${bot.isRunning ? chalk.green('●') : chalk.red('○')} ${new Date(bot.lastHeartbeat).toLocaleTimeString()}`);
+  if (bots.length > 0) {
+    console.log(chalk.cyan('All Bots:\n'));
+    for (const bot of bots) {
+      const enabledStatus = bot.enabled ? chalk.green('✓') : chalk.red('✗');
+      const runningStatus = bot.isRunning ? chalk.green('● RUNNING') : chalk.gray('○ Stopped');
+      console.log(`  ${enabledStatus} ${bot.name}: ${runningStatus} ${!bot.enabled ? chalk.red('[DISABLED]') : ''}`);
     }
     console.log();
   }
