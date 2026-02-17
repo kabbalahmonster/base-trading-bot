@@ -48,9 +48,10 @@ async function main() {
           { name: '⏹️  Stop bot(s)', value: 'stop' },
           { name: '📊 View status', value: 'status' },
           { name: '💰 Fund wallet', value: 'fund' },
+          { name: '👛 View wallet balances', value: 'view_balances' },
           { name: '📤 Send ETH to external', value: 'send_external' },
           { name: '🪙 Send tokens to external', value: 'send_tokens' },
-          { name: '👛 Manage wallets', value: 'manage_wallets' },
+          { name: '🔧 Manage wallets', value: 'manage_wallets' },
           { name: '🏧 Reclaim funds', value: 'reclaim' },
           { name: '🗑️  Delete bot', value: 'delete' },
           { name: '❌ Exit', value: 'exit' },
@@ -76,6 +77,9 @@ async function main() {
           break;
         case 'fund':
           await fundWallet(walletManager, storage);
+          break;
+        case 'view_balances':
+          await viewWalletBalances(storage);
           break;
         case 'send_external':
           await sendToExternalWallet(walletManager, storage);
@@ -339,6 +343,57 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
       console.log(`  ${bot.name}: ${bot.isRunning ? chalk.green('●') : chalk.red('○')} ${new Date(bot.lastHeartbeat).toLocaleTimeString()}`);
     }
     console.log();
+  }
+}
+
+async function viewWalletBalances(storage: JsonStorage) {
+  console.log(chalk.cyan('\n👛 Wallet Balances\n'));
+
+  const mainWallet = await storage.getMainWallet();
+  if (!mainWallet) {
+    console.log(chalk.yellow('No wallets found. Create a bot first.\n'));
+    return;
+  }
+
+  const walletDictionary = await storage.getWalletDictionary();
+
+  try {
+    const { createPublicClient, http, formatEther } = await import('viem');
+    const { base } = await import('viem/chains');
+
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(RPC_URL),
+    });
+
+    // Check main wallet balance
+    const mainBalance = await publicClient.getBalance({
+      address: mainWallet.address as `0x${string}`,
+    });
+
+    console.log(chalk.green('Main Wallet:'));
+    console.log(`  Address: ${mainWallet.address}`);
+    console.log(`  Balance: ${formatEther(mainBalance)} ETH\n`);
+
+    // Check bot wallets
+    if (Object.keys(walletDictionary).length > 0) {
+      console.log(chalk.cyan('Bot Wallets:'));
+      for (const [id, wallet] of Object.entries(walletDictionary)) {
+        const balance = await publicClient.getBalance({
+          address: wallet.address as `0x${string}`,
+        });
+        console.log(`\n  ${id.slice(0, 16)}...:`);
+        console.log(`    Address: ${wallet.address}`);
+        console.log(`    Balance: ${formatEther(balance)} ETH`);
+      }
+    } else {
+      console.log(chalk.dim('No bot wallets.\n'));
+    }
+
+    console.log();
+
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Failed to fetch balances: ${error.message}\n`));
   }
 }
 
