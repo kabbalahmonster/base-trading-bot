@@ -2,7 +2,7 @@
 
 import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
-import { BotStorage, BotInstance, MainWallet, WalletDictionary } from '../types/index.js';
+import { BotStorage, BotInstance, WalletData, WalletDictionary } from '../types/index.js';
 
 const DEFAULT_DATA: BotStorage = {
   walletDictionary: {},
@@ -31,21 +31,64 @@ export class JsonStorage {
       this.db.data.bots = [];
     }
     
+    // Migration: convert legacy mainWallet to new format
+    if (this.db.data.mainWallet && !this.db.data.walletDictionary['main-legacy']) {
+      this.db.data.walletDictionary['main-legacy'] = {
+        ...this.db.data.mainWallet,
+        type: 'main',
+        name: 'Main Wallet (Legacy)',
+      };
+      this.db.data.primaryWalletId = 'main-legacy';
+    }
+    
     await this.db.write();
   }
 
-  // Main Wallet
-  async getMainWallet(): Promise<MainWallet | undefined> {
-    return this.db.data?.mainWallet;
+  // Primary/Main Wallet (backward compatibility)
+  async getMainWallet(): Promise<WalletData | undefined> {
+    // First check primaryWalletId
+    if (this.db.data?.primaryWalletId && this.db.data.walletDictionary[this.db.data.primaryWalletId]) {
+      return this.db.data.walletDictionary[this.db.data.primaryWalletId];
+    }
+    
+    // Legacy fallback
+    if (this.db.data?.mainWallet) {
+      return {
+        ...this.db.data.mainWallet,
+        type: 'main',
+        name: 'Main Wallet',
+      };
+    }
+    
+    // Find first main wallet
+    for (const [id, wallet] of Object.entries(this.db.data?.walletDictionary || {})) {
+      if (wallet.type === 'main') {
+        return wallet;
+      }
+    }
+    
+    return undefined;
   }
 
-  async setMainWallet(wallet: MainWallet): Promise<void> {
+  async setMainWallet(wallet: WalletData): Promise<void> {
     if (!this.db.data) await this.init();
+    // Legacy support
     this.db.data!.mainWallet = wallet;
     await this.db.write();
   }
 
-  // Bot Dictionary
+  // Primary wallet ID
+  async getPrimaryWalletId(): Promise<string | undefined> {
+    return this.db.data?.primaryWalletId;
+  }
+
+  async setPrimaryWalletId(id: string): Promise<void> {
+    if (!this.db.data) await this.init();
+    this.db.data!.primaryWalletId = id;
+    await this.db.write();
+  }
+
+  // Wallet Dictionary
   async getWalletDictionary(): Promise<WalletDictionary> {
     return this.db.data?.walletDictionary || {};
   }
@@ -56,9 +99,19 @@ export class JsonStorage {
     await this.db.write();
   }
 
+  async addWallet(walletId: string, wallet: WalletData): Promise<void> {
+    if (!this.db.data) await this.init();
+    this.db.data!.walletDictionary[walletId] = wallet;
+    await this.db.write();
+  }
+
   async addBotWallet(botId: string, wallet: { address: string; encryptedPrivateKey: string; createdAt: number }): Promise<void> {
     if (!this.db.data) await this.init();
-    this.db.data!.walletDictionary[botId] = wallet;
+    this.db.data!.walletDictionary[botId] = {
+      ...wallet,
+      type: 'bot',
+      name: `Bot ${botId.slice(0, 8)}...`,
+    };
     await this.db.write();
   }
 
@@ -130,6 +183,7 @@ export class JsonStorage {
       mainWallet: this.db.data?.mainWallet,
       walletDictionary: this.db.data?.walletDictionary || {},
       bots: this.db.data?.bots || [],
+      primaryWalletId: this.db.data?.primaryWalletId,
     };
   }
 

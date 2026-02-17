@@ -91,22 +91,22 @@ export interface WalletData {
   address: string;
   encryptedPrivateKey: string;
   createdAt: number;
-}
-
-export interface MainWallet {
-  address: string;
-  encryptedPrivateKey: string;
-  createdAt: number;
+  name?: string;  // Optional name for identification
+  type: 'main' | 'bot';
 }
 
 export interface WalletDictionary {
-  [botId: string]: WalletData;
+  [walletId: string]: WalletData;
 }
 
 export interface BotStorage {
-  mainWallet?: MainWallet;
+  // Legacy: keeping for backward compatibility
+  mainWallet?: WalletData;
+  // New: all wallets in one dictionary
   walletDictionary: WalletDictionary;
   bots: BotInstance[];
+  // Track which wallet is the "primary" main wallet
+  primaryWalletId?: string;
 }
 
 export interface PriceData {

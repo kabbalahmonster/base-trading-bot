@@ -1272,72 +1272,64 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
 async function manageWallets(walletManager: WalletManager, storage: JsonStorage) {
   console.log(chalk.cyan('\n👛 Wallet Management\n'));
 
-  let mainWallet = await storage.getMainWallet();
+  const walletDictionary = await storage.getWalletDictionary();
+  const mainWallets = Object.entries(walletDictionary).filter(([_, w]) => w.type === 'main');
   
-  // If no main wallet exists, offer to create one
-  if (!mainWallet) {
-    console.log(chalk.yellow('No main wallet found.\n'));
-    const { createWallet } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'createWallet',
-        message: 'Create a main wallet?',
-        default: true,
-      },
-    ]);
-    
-    if (!createWallet) {
-      console.log(chalk.dim('Cancelled.\n'));
-      return;
-    }
-    
-    // Create main wallet
-    const { password } = await inquirer.prompt([
+  // If no wallets exist, require password setup
+  let password: string;
+  if (mainWallets.length === 0) {
+    console.log(chalk.yellow('No wallets found. Create your first wallet.\n'));
+    const { newPassword } = await inquirer.prompt([
       {
         type: 'password',
-        name: 'password',
+        name: 'newPassword',
         message: 'Create master password (min 8 chars):',
         mask: '*',
         validate: (input) => input.length >= 8 || 'Password must be at least 8 characters',
       },
     ]);
-    
+    password = newPassword;
     await walletManager.initialize(password);
-    mainWallet = walletManager.generateMainWallet();
-    await storage.setMainWallet(mainWallet);
+  } else {
+    // Existing wallets - require password
+    const { existingPassword } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'existingPassword',
+        message: 'Enter master password:',
+        mask: '*',
+      },
+    ]);
+    password = existingPassword;
     
-    console.log(chalk.green(`\n✓ Main wallet created: ${mainWallet.address}`));
-    console.log(chalk.yellow('⚠️  Save this address - you need to fund it with ETH\n'));
-    return;
+    try {
+      await walletManager.initialize(password);
+      walletManager.importData({ 
+        walletDictionary, 
+        primaryWalletId: await storage.getPrimaryWalletId() 
+      });
+    } catch (error: any) {
+      console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
+      return;
+    }
   }
-
-  const { password } = await inquirer.prompt([
-    {
-      type: 'password',
-      name: 'password',
-      message: 'Enter master password:',
-      mask: '*',
-    },
-  ]);
-
-  try {
-    await walletManager.initialize(password);
-    walletManager.importData({ mainWallet, walletDictionary: await storage.getWalletDictionary() });
-  } catch (error: any) {
-    console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
-    return;
-  }
-
-  const walletDictionary = await storage.getWalletDictionary();
 
   while (true) {
+    // Refresh wallet data
+    const currentDictionary = await storage.getWalletDictionary();
+    const currentMainWallets = Object.entries(currentDictionary).filter(([_, w]) => w.type === 'main');
+    const currentBotWallets = Object.entries(currentDictionary).filter(([_, w]) => w.type === 'bot');
+    const primaryId = await storage.getPrimaryWalletId();
+
     const { action } = await inquirer.prompt([
       {
         type: 'list',
         name: 'action',
-        message: 'Wallet Management:',
+        message: `Wallet Management (${currentMainWallets.length} main, ${currentBotWallets.length} bot):`,
         choices: [
           { name: '📋 List all wallets', value: 'list' },
+          { name: '➕ Create new main wallet', value: 'create' },
+          { name: '⭐ Set primary wallet', value: 'primary' },
           { name: '🔑 Export private key', value: 'export' },
           { name: '⬅️  Back', value: 'back' },
         ],
@@ -1348,35 +1340,110 @@ async function manageWallets(walletManager: WalletManager, storage: JsonStorage)
 
     if (action === 'list') {
       console.log(chalk.cyan('\n📋 All Wallets:\n'));
-      console.log(chalk.green(`Main Wallet: ${mainWallet.address}`));
-      console.log(chalk.dim(`  Created: ${new Date(mainWallet.createdAt).toLocaleString()}`));
-
-      if (Object.keys(walletDictionary).length === 0) {
-        console.log(chalk.dim('\nNo bot wallets found.'));
+      
+      if (currentMainWallets.length === 0) {
+        console.log(chalk.dim('No main wallets.\n'));
       } else {
-        console.log(chalk.cyan('\nBot Wallets:'));
-        for (const [id, wallet] of Object.entries(walletDictionary)) {
-          console.log(chalk.green(`${id.slice(0, 16)}...: ${wallet.address}`));
-          console.log(chalk.dim(`  Created: ${new Date(wallet.createdAt).toLocaleString()}`));
+        console.log(chalk.green('Main Wallets:'));
+        for (const [id, wallet] of currentMainWallets) {
+          const isPrimary = id === primaryId ? chalk.yellow(' ⭐ PRIMARY') : '';
+          console.log(`  ${chalk.green('●')} ${wallet.name || 'Main Wallet'}: ${wallet.address.slice(0, 16)}...${isPrimary}`);
         }
+        console.log();
       }
-      console.log();
+
+      if (currentBotWallets.length === 0) {
+        console.log(chalk.dim('No bot wallets.\n'));
+      } else {
+        console.log(chalk.cyan('Bot Wallets:'));
+        for (const [id, wallet] of currentBotWallets) {
+          console.log(`  ${chalk.blue('●')} ${wallet.name || id.slice(0, 16)}...: ${wallet.address.slice(0, 16)}...`);
+        }
+        console.log();
+      }
+    }
+
+    if (action === 'create') {
+      const { walletName } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'walletName',
+          message: 'Wallet name (optional):',
+          default: `Main Wallet ${currentMainWallets.length + 1}`,
+        },
+      ]);
+
+      const newWallet = walletManager.generateMainWallet(walletName);
+      const walletId = Object.keys(walletManager.getAllWallets()).find(
+        id => walletManager.getAllWallets()[id].address === newWallet.address
+      );
+      
+      if (walletId) {
+        await storage.addWallet(walletId, { ...newWallet, type: 'main', name: walletName });
+        
+        // Set as primary if it's the first one
+        if (currentMainWallets.length === 0) {
+          await storage.setPrimaryWalletId(walletId);
+        }
+        
+        console.log(chalk.green(`\n✓ Main wallet created: ${newWallet.address}`));
+        console.log(chalk.yellow('⚠️  Save this address - you need to fund it with ETH\n'));
+      }
+    }
+
+    if (action === 'primary') {
+      if (currentMainWallets.length < 2) {
+        console.log(chalk.yellow('\nNeed at least 2 main wallets to set primary.\n'));
+        continue;
+      }
+
+      const { selectedId } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selectedId',
+          message: 'Select primary wallet:',
+          choices: currentMainWallets.map(([id, wallet]) => ({
+            name: `${wallet.name || 'Main Wallet'}: ${wallet.address.slice(0, 16)}... ${id === primaryId ? '(current)' : ''}`,
+            value: id,
+          })),
+        },
+      ]);
+
+      await storage.setPrimaryWalletId(selectedId);
+      walletManager.setPrimaryWallet(selectedId);
+      console.log(chalk.green('\n✓ Primary wallet updated\n'));
     }
 
     if (action === 'export') {
       const allWallets = [
-        { name: 'Main Wallet', id: 'main' as const },
-        ...Object.keys(walletDictionary).map(id => ({ name: `Bot Wallet (${id.slice(0, 8)}...)`, id })),
+        ...currentMainWallets.map(([id, wallet]) => ({ 
+          name: `${wallet.name || 'Main Wallet'} ${id === primaryId ? '⭐' : ''}`, 
+          id 
+        })),
+        ...currentBotWallets.map(([id, wallet]) => ({ 
+          name: wallet.name || `Bot Wallet (${id.slice(0, 8)}...)`, 
+          id 
+        })),
       ];
+
+      if (allWallets.length === 0) {
+        console.log(chalk.yellow('\nNo wallets to export.\n'));
+        continue;
+      }
 
       const { walletId } = await inquirer.prompt([
         {
           type: 'list',
           name: 'walletId',
           message: 'Select wallet to export:',
-          choices: allWallets.map(w => ({ name: w.name, value: w.id })),
+          choices: [
+            ...allWallets.map(w => ({ name: w.name, value: w.id })),
+            { name: '⬅️  Back', value: 'back' },
+          ],
         },
       ]);
+
+      if (walletId === 'back') continue;
 
       console.log(chalk.red('\n🚨 SECURITY WARNING 🚨'));
       console.log(chalk.red('The private key gives FULL CONTROL of the wallet.'));
@@ -1401,13 +1468,14 @@ async function manageWallets(walletManager: WalletManager, storage: JsonStorage)
 
       try {
         const privateKey = walletManager.exportPrivateKey(walletId);
+        const walletInfo = currentDictionary[walletId];
 
         console.log(chalk.cyan('\n🔑 Private Key:'));
         console.log(chalk.green(privateKey));
         console.log(chalk.cyan('\n📍 Address:'));
-        console.log(chalk.green(
-          walletId === 'main' ? mainWallet.address : walletDictionary[walletId].address
-        ));
+        console.log(chalk.green(walletInfo.address));
+        console.log(chalk.cyan('\n📛 Name:'));
+        console.log(chalk.green(walletInfo.name || 'Unnamed'));
         console.log(chalk.red('\n⚠️  Copy this key NOW. Clear your terminal history after!'));
         console.log(chalk.dim('   (Type "history -c" in bash to clear)\n'));
 
