@@ -173,6 +173,22 @@ export class UniswapV3TWAP {
   }
 
   /**
+   * Sleep helper for retry delays
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Check if error is rate limiting
+   */
+  private isRateLimitError(error: any): boolean {
+    return error?.message?.includes('429') || 
+           error?.message?.includes('rate limit') ||
+           error?.code === -32016;
+  }
+
+  /**
    * Get TWAP for a pool using the observe() function
    * This is the most accurate method for calculating TWAP
    */
@@ -180,63 +196,73 @@ export class UniswapV3TWAP {
     poolAddress: string,
     secondsAgo: number = this.config.twapSeconds,
     token0Decimals: number = 18,
-    token1Decimals: number = 18
+    token1Decimals: number = 18,
+    retries: number = 3
   ): Promise<TWAPResult | null> {
-    try {
-      // Get tick cumulatives for [secondsAgo, 0] (now)
-      const secondsAgos = [secondsAgo, 0];
-      
-      const [tickCumulatives] = await this.publicClient.readContract({
-        address: poolAddress as `0x${string}`,
-        abi: POOL_ABI,
-        functionName: 'observe',
-        args: [secondsAgos],
-      });
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        // Get tick cumulatives for [secondsAgo, 0] (now)
+        const secondsAgos = [secondsAgo, 0];
+        
+        const [tickCumulatives] = await this.publicClient.readContract({
+          address: poolAddress as `0x${string}`,
+          abi: POOL_ABI,
+          functionName: 'observe',
+          args: [secondsAgos],
+        });
 
-      // Calculate average tick over the period
-      // TWAP tick = (tickCumulative[1] - tickCumulative[0]) / secondsAgo
-      const tickCumulativeDelta = Number(tickCumulatives[1] - tickCumulatives[0]);
-      const averageTick = Math.round(tickCumulativeDelta / secondsAgo);
+        // Calculate average tick over the period
+        // TWAP tick = (tickCumulative[1] - tickCumulative[0]) / secondsAgo
+        const tickCumulativeDelta = Number(tickCumulatives[1] - tickCumulatives[0]);
+        const averageTick = Math.round(tickCumulativeDelta / secondsAgo);
 
-      // Get current slot0 for additional context
-      const slot0 = await this.publicClient.readContract({
-        address: poolAddress as `0x${string}`,
-        abi: POOL_ABI,
-        functionName: 'slot0',
-      });
+        // Get current slot0 for additional context
+        const slot0 = await this.publicClient.readContract({
+          address: poolAddress as `0x${string}`,
+          abi: POOL_ABI,
+          functionName: 'slot0',
+        });
 
-      const [sqrtPriceX96] = slot0;
+        const [sqrtPriceX96] = slot0;
 
-      // Calculate TWAP price from average tick
-      const twapPrice = this.tickToPrice(averageTick, token0Decimals, token1Decimals);
+        // Calculate TWAP price from average tick
+        const twapPrice = this.tickToPrice(averageTick, token0Decimals, token1Decimals);
 
-      // Calculate confidence based on how close TWAP is to current price
-      const currentPrice = this.sqrtPriceX96ToPrice(sqrtPriceX96, token0Decimals, token1Decimals);
-      const priceDiff = Math.abs(currentPrice - twapPrice) / currentPrice;
-      
-      // Higher deviation = lower confidence
-      let confidence = 1.0;
-      if (priceDiff > 0.1) confidence = 0.5;      // >10% deviation
-      else if (priceDiff > 0.05) confidence = 0.7; // >5% deviation
-      else if (priceDiff > 0.02) confidence = 0.9; // >2% deviation
+        // Calculate confidence based on how close TWAP is to current price
+        const currentPrice = this.sqrtPriceX96ToPrice(sqrtPriceX96, token0Decimals, token1Decimals);
+        const priceDiff = Math.abs(currentPrice - twapPrice) / currentPrice;
+        
+        // Higher deviation = lower confidence
+        let confidence = 1.0;
+        if (priceDiff > 0.1) confidence = 0.5;      // >10% deviation
+        else if (priceDiff > 0.05) confidence = 0.7; // >5% deviation
+        else if (priceDiff > 0.02) confidence = 0.9; // >2% deviation
 
-      // Reduce confidence if the observation window is short
-      if (secondsAgo < 300) { // Less than 5 minutes
-        confidence *= 0.8;
+        // Reduce confidence if the observation window is short
+        if (secondsAgo < 300) { // Less than 5 minutes
+          confidence *= 0.8;
+        }
+
+        return {
+          price: twapPrice,
+          sqrtPriceX96,
+          tick: averageTick,
+          timestamp: Math.floor(Date.now() / 1000),
+          secondsAgo,
+          confidence: Math.max(0, Math.min(1, confidence)),
+        };
+      } catch (error: any) {
+        if (this.isRateLimitError(error) && attempt < retries - 1) {
+          const delay = Math.pow(2, attempt) * 1000;
+          console.warn(`TWAP rate limited, retrying in ${delay}ms... (${attempt + 1}/${retries})`);
+          await this.sleep(delay);
+          continue;
+        }
+        console.error(`Error calculating TWAP for pool ${poolAddress}:`, error.message);
+        return null;
       }
-
-      return {
-        price: twapPrice,
-        sqrtPriceX96,
-        tick: averageTick,
-        timestamp: Math.floor(Date.now() / 1000),
-        secondsAgo,
-        confidence: Math.max(0, Math.min(1, confidence)),
-      };
-    } catch (error: any) {
-      console.error(`Error calculating TWAP for pool ${poolAddress}:`, error.message);
-      return null;
     }
+    return null;
   }
 
   /**
