@@ -9,7 +9,7 @@ import { JsonStorage } from './storage/JsonStorage.js';
 import { HeartbeatManager } from './bot/HeartbeatManager.js';
 import { GridCalculator } from './grid/GridCalculator.js';
 import { BotInstance, GridConfig } from './types/index.js';
-import { formatEther, createPublicClient } from 'viem';
+import { formatEther, createPublicClient, formatUnits } from 'viem';
 import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 
@@ -927,6 +927,115 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
   }
 }
 
+/**
+ * Get token balances for a wallet
+ * Checks bot positions and common tokens
+ */
+async function getTokenBalances(walletAddress: string, storage: JsonStorage): Promise<Array<{address: string, symbol: string, balance: string}>> {
+  const balances: Array<{address: string, symbol: string, balance: string}> = [];
+  
+  try {
+    const workingRpc = await getWorkingRpc();
+    const { createPublicClient, http, formatUnits } = await import('viem');
+    const { base } = await import('viem/chains');
+    const { erc20Abi } = await import('viem');
+    
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(workingRpc),
+    });
+    
+    // Get tokens from bot positions
+    const bots = await storage.getAllBots();
+    const botTokens = new Set<string>();
+    
+    for (const bot of bots) {
+      // Check if this wallet is used by any bot
+      if (bot.walletAddress.toLowerCase() === walletAddress.toLowerCase()) {
+        botTokens.add(bot.tokenAddress);
+      }
+      
+      // Also check positions with tokens
+      for (const position of bot.positions) {
+        if (position.tokensReceived && BigInt(position.tokensReceived) > 0) {
+          botTokens.add(bot.tokenAddress);
+        }
+      }
+    }
+    
+    // Add common Base tokens
+    const commonTokens = [
+      { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH' },
+      { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', symbol: 'USDC' },
+      { address: '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', symbol: 'DAI' },
+      { address: '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', symbol: 'cbETH' },
+    ];
+    
+    for (const token of commonTokens) {
+      botTokens.add(token.address);
+    }
+    
+    // Check balances for all tokens
+    for (const tokenAddress of botTokens) {
+      try {
+        // Get decimals
+        let decimals = 18;
+        try {
+          decimals = await publicClient.readContract({
+            address: tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'decimals',
+          });
+        } catch {
+          // Default to 18 if fails
+        }
+        
+        // Get balance
+        const balance = await publicClient.readContract({
+          address: tokenAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [walletAddress as `0x${string}`],
+        });
+        
+        // Get symbol
+        let symbol = 'TOKEN';
+        try {
+          symbol = await publicClient.readContract({
+            address: tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'symbol',
+          });
+        } catch {
+          // Check if it's in common tokens
+          const common = commonTokens.find(t => t.address.toLowerCase() === tokenAddress.toLowerCase());
+          if (common) symbol = common.symbol;
+        }
+        
+        // Only add if balance > 0
+        if (balance > BigInt(0)) {
+          balances.push({
+            address: tokenAddress,
+            symbol,
+            balance: formatUnits(balance, decimals),
+          });
+        }
+      } catch {
+        // Skip tokens that fail
+        continue;
+      }
+    }
+    
+    // Sort by balance (descending)
+    balances.sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance));
+    
+  } catch (error: any) {
+    console.log(chalk.yellow(`⚠ Could not fetch token balances: ${error.message}`));
+  }
+  
+  return balances;
+}
+
 async function sendTokensToExternal(walletManager: WalletManager, storage: JsonStorage) {
   console.log(chalk.cyan('\n🪙 Send Tokens to External Wallet\n'));
 
@@ -1012,13 +1121,75 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
     return;
   }
 
-  const { tokenAddress, recipient, amount } = await inquirer.prompt([
+  // Check token balances and show selection
+  console.log(chalk.dim('\nChecking token balances...'));
+  
+  const tokensWithBalance = await getTokenBalances(fromWallet, storage);
+  
+  if (tokensWithBalance.length === 0) {
+    console.log(chalk.yellow('\nNo token balances found.\n'));
+    
+    // Offer manual entry
+    const { manualEntry } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'manualEntry',
+        message: 'Enter token address manually?',
+        default: false,
+      },
+    ]);
+    
+    if (!manualEntry) {
+      console.log(chalk.dim('Cancelled.\n'));
+      return;
+    }
+  }
+  
+  // Build token choices
+  const tokenChoices = tokensWithBalance.map(t => ({
+    name: `${t.symbol}: ${t.balance} (${t.address.slice(0, 10)}...)`,
+    value: t.address,
+  }));
+  
+  // Add manual entry option
+  tokenChoices.push({ name: '✏️  Enter token address manually', value: 'manual' });
+  tokenChoices.push({ name: '⬅️  Back', value: 'back' });
+  
+  const { selectedToken } = await inquirer.prompt([
     {
-      type: 'input',
-      name: 'tokenAddress',
-      message: 'Token contract address (0x...):',
-      validate: (input) => input.startsWith('0x') && input.length === 42 || 'Invalid address',
+      type: 'list',
+      name: 'selectedToken',
+      message: 'Select token to send:',
+      choices: tokenChoices,
     },
+  ]);
+  
+  if (selectedToken === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+  
+  let tokenAddress: string;
+  let tokenSymbol: string;
+  
+  if (selectedToken === 'manual') {
+    const { manualToken } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'manualToken',
+        message: 'Token contract address (0x...):',
+        validate: (input) => input.startsWith('0x') && input.length === 42 || 'Invalid address',
+      },
+    ]);
+    tokenAddress = manualToken;
+    tokenSymbol = 'TOKEN';
+  } else {
+    tokenAddress = selectedToken;
+    const selected = tokensWithBalance.find(t => t.address === selectedToken);
+    tokenSymbol = selected?.symbol || 'TOKEN';
+  }
+
+  const { recipient, amount } = await inquirer.prompt([
     {
       type: 'input',
       name: 'recipient',
@@ -1028,19 +1199,19 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
     {
       type: 'input',
       name: 'amount',
-      message: 'Amount of tokens to send:',
+      message: `Amount of ${tokenSymbol} to send:`,
       validate: (input) => !isNaN(parseFloat(input)) && parseFloat(input) > 0 || 'Invalid amount',
     },
   ]);
 
-  console.log(chalk.yellow(`\n⚠️  About to send ${amount} tokens to ${recipient}`));
+  console.log(chalk.yellow(`\n⚠️  About to send ${amount} ${tokenSymbol} to ${recipient}`));
   console.log(chalk.red('⚠️  DOUBLE-CHECK THE TOKEN AND ADDRESS - TRANSACTIONS CANNOT BE REVERSED'));
 
   const { confirm } = await inquirer.prompt([
     {
       type: 'confirm',
       name: 'confirm',
-      message: 'Confirm transaction?',
+      message: `Confirm sending ${tokenSymbol}?`,
       default: false,
     },
   ]);
