@@ -55,9 +55,6 @@ export interface ValidationResult {
   confidence: number;
 }
 
-// WETH address on Base
-const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
-
 export class PriceOracle {
   private publicClient: any;
   private chainlink: ChainlinkFeed;
@@ -435,10 +432,18 @@ export class PriceOracle {
     ethPrice: number | null;
   }> {
     try {
-      const [ethPrice, twapResult] = await Promise.all([
-        this.chainlink.getEthPrice(),
-        this.uniswap.getTokenPriceInETH(WETH_ADDRESS, 60), // 1 minute TWAP for WETH should be ~1
-      ]);
+      // Check Chainlink ETH price
+      const ethPrice = await this.chainlink.getEthPrice();
+      
+      // Check Uniswap with USDC/WETH pair (more reliable than WETH/WETH)
+      // Use a common token that has good liquidity
+      const USDC_ADDRESS = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+      let twapResult = null;
+      try {
+        twapResult = await this.uniswap.getTokenPriceInETH(USDC_ADDRESS, 60);
+      } catch {
+        // TWAP might fail, that's ok for health check
+      }
 
       return {
         healthy: ethPrice !== null && ethPrice > 0,

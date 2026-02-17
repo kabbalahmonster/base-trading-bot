@@ -97,53 +97,75 @@ export class ChainlinkFeed {
   }
 
   /**
-   * Get the latest price from a Chainlink feed
+   * Sleep helper for retry delays
    */
-  async getLatestPrice(feedAddress: string): Promise<ChainlinkPriceData | null> {
-    try {
-      const [roundData, decimals] = await Promise.all([
-        this.publicClient.readContract({
-          address: feedAddress as `0x${string}`,
-          abi: AGGREGATOR_ABI,
-          functionName: 'latestRoundData',
-        }),
-        this.publicClient.readContract({
-          address: feedAddress as `0x${string}`,
-          abi: AGGREGATOR_ABI,
-          functionName: 'decimals',
-        }),
-      ]);
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 
-      const [roundId, answer, , updatedAt, answeredInRound] = roundData;
+  /**
+   * Get the latest price from a Chainlink feed with retry logic
+   */
+  async getLatestPrice(feedAddress: string, retries: number = 3): Promise<ChainlinkPriceData | null> {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const [roundData, decimals] = await Promise.all([
+          this.publicClient.readContract({
+            address: feedAddress as `0x${string}`,
+            abi: AGGREGATOR_ABI,
+            functionName: 'latestRoundData',
+          }),
+          this.publicClient.readContract({
+            address: feedAddress as `0x${string}`,
+            abi: AGGREGATOR_ABI,
+            functionName: 'decimals',
+          }),
+        ]);
 
-      // Check for invalid data
-      if (answer <= 0) {
-        console.warn(`Invalid price from Chainlink feed ${feedAddress}: ${answer}`);
+        const [roundId, answer, , updatedAt, answeredInRound] = roundData;
+
+        // Check for invalid data
+        if (answer <= 0) {
+          console.warn(`Invalid price from Chainlink feed ${feedAddress}: ${answer}`);
+          return null;
+        }
+
+        // Check if price is stale
+        const now = Math.floor(Date.now() / 1000);
+        const stalenessSeconds = now - Number(updatedAt);
+        if (stalenessSeconds * 1000 > this.config.stalePriceThresholdMs) {
+          console.warn(`Stale price from Chainlink feed ${feedAddress}: ${stalenessSeconds}s old`);
+          // Still return the data but it may be flagged as low confidence
+        }
+
+        // Calculate actual price
+        const price = Number(answer) / Math.pow(10, decimals);
+
+        return {
+          price,
+          decimals,
+          timestamp: Number(updatedAt),
+          roundId,
+          answeredInRound,
+        };
+      } catch (error: any) {
+        // Check for rate limiting (429 error)
+        const isRateLimit = error?.message?.includes('429') || 
+                           error?.message?.includes('rate limit') ||
+                           error?.code === -32016;
+        
+        if (isRateLimit && attempt < retries - 1) {
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+          console.warn(`Rate limited, retrying in ${delay}ms... (attempt ${attempt + 1}/${retries})`);
+          await this.sleep(delay);
+          continue;
+        }
+        
+        console.error(`Error fetching Chainlink price from ${feedAddress}:`, error.message);
         return null;
       }
-
-      // Check if price is stale
-      const now = Math.floor(Date.now() / 1000);
-      const stalenessSeconds = now - Number(updatedAt);
-      if (stalenessSeconds * 1000 > this.config.stalePriceThresholdMs) {
-        console.warn(`Stale price from Chainlink feed ${feedAddress}: ${stalenessSeconds}s old`);
-        // Still return the data but it may be flagged as low confidence
-      }
-
-      // Calculate actual price
-      const price = Number(answer) / Math.pow(10, decimals);
-
-      return {
-        price,
-        decimals,
-        timestamp: Number(updatedAt),
-        roundId,
-        answeredInRound,
-      };
-    } catch (error: any) {
-      console.error(`Error fetching Chainlink price from ${feedAddress}:`, error.message);
-      return null;
     }
+    return null;
   }
 
   /**

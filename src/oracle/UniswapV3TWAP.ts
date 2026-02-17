@@ -68,6 +68,11 @@ export class UniswapV3TWAP {
    * Find the best pool for a token pair (highest liquidity)
    */
   async findBestPool(tokenA: string, tokenB: string): Promise<string | null> {
+    // Skip if same token (WETH/WETH, etc.)
+    if (tokenA.toLowerCase() === tokenB.toLowerCase()) {
+      return null;
+    }
+
     let bestPool: string | null = null;
     let bestLiquidity = BigInt(0);
 
