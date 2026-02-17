@@ -12,6 +12,11 @@ export class GridCalculator {
     currentPrice: number,
     config: GridConfig
   ): Position[] {
+    // Validate numPositions
+    if (config.numPositions <= 0) {
+      throw new Error(`Invalid numPositions: ${config.numPositions}. Must be greater than 0.`);
+    }
+
     const positions: Position[] = [];
 
     // Determine floor and ceiling
@@ -37,14 +42,17 @@ export class GridCalculator {
       const rangeEnd = floorPrice + (totalRange * (i + 1)) / config.numPositions;
 
       const buyMin = rangeStart;
-      const buyMax = rangeEnd;
+      // Clamp buyMax to ceiling to handle floating point precision issues
+      const buyMax = Math.min(rangeEnd, ceilingPrice);
 
       // Sell price is based on buyMax for minimum guaranteed profit
       const sellPrice = buyMax * (1 + config.takeProfitPercent / 100);
 
       // Stop loss is based on buyMin
+      // Clamp stopLossPercent to valid range (0-100) to prevent negative prices
+      const clampedStopLossPercent = Math.max(0, Math.min(100, config.stopLossPercent));
       const stopLossPrice = config.stopLossEnabled
-        ? buyMin * (1 - config.stopLossPercent / 100)
+        ? buyMin * (1 - clampedStopLossPercent / 100)
         : 0;
 
       positions.push({
@@ -67,14 +75,17 @@ export class GridCalculator {
    */
   static findBuyPosition(
     positions: Position[],
-    currentPrice: number
+    currentPrice: number,
+    tolerance?: number
   ): Position | null {
     for (const position of positions) {
       if (position.status !== 'EMPTY') continue;
 
       // Check if price is within the buy range [buyMin, buyMax]
       // Allow small buffer at boundaries for floating point precision
-      const buffer = (position.buyMax - position.buyMin) * 0.001;
+      const buffer = tolerance !== undefined 
+        ? tolerance 
+        : (position.buyMax - position.buyMin) * 0.001;
 
       if (currentPrice >= position.buyMin - buffer && currentPrice <= position.buyMax + buffer) {
         return position;

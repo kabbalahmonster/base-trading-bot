@@ -2,9 +2,9 @@
 // Main Price Oracle module combining Chainlink feeds and Uniswap V3 TWAP
 // Provides reliable price data with confidence scoring and fallback mechanisms
 
-import { PublicClient, createPublicClient, http } from 'viem';
+import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
-import { ChainlinkFeed, ChainlinkPriceData, CHAINLINK_FEEDS } from './ChainlinkFeed.js';
+import { ChainlinkFeed, ChainlinkPriceData } from './ChainlinkFeed.js';
 import { UniswapV3TWAP, TWAPResult, DEFAULT_TWAP_SECONDS } from './UniswapV3TWAP.js';
 
 export interface PriceOracleConfig {
@@ -53,11 +53,8 @@ export interface ValidationResult {
 // WETH address on Base
 const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
 
-// USDC address on Base (for USD pricing)
-const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-
 export class PriceOracle {
-  private publicClient: PublicClient;
+  private publicClient: any;
   private chainlink: ChainlinkFeed;
   private uniswap: UniswapV3TWAP;
   private config: Required<PriceOracleConfig>;

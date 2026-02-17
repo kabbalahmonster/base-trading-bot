@@ -1,112 +1,121 @@
 // tests/analytics/TradeHistory.test.ts
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { TradeHistory, TradeRecord } from '../../src/analytics/TradeHistory';
-import { unlink } from 'fs/promises';
+import { TradeHistory } from '../../src/analytics/TradeHistory.js';
+import { TradeStorage } from '../../src/analytics/TradeStorage.js';
 import { existsSync } from 'fs';
-
-const TEST_DB_PATH = './test-trade-history.json';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { mkdtempSync, rmSync } from 'fs';
 
 describe('TradeHistory', () => {
   let tradeHistory: TradeHistory;
+  let tradeStorage: TradeStorage;
+  let tempDir: string;
 
   beforeEach(async () => {
-    // Clean up any existing test file
-    if (existsSync(TEST_DB_PATH)) {
-      await unlink(TEST_DB_PATH);
-    }
-    tradeHistory = new TradeHistory(TEST_DB_PATH);
-    await tradeHistory.init();
+    // Create unique temp directory for each test
+    tempDir = mkdtempSync(join(tmpdir(), 'trade-history-test-'));
+    const dbPath = join(tempDir, 'trades.json');
+    
+    tradeStorage = new TradeStorage(dbPath);
+    await tradeStorage.init();
+    tradeHistory = new TradeHistory(tradeStorage);
   });
 
   afterEach(async () => {
-    // Clean up test file
-    if (existsSync(TEST_DB_PATH)) {
-      await unlink(TEST_DB_PATH);
+    // Clean up temp directory
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true });
     }
   });
 
   describe('recordTrade', () => {
     it('should record a buy trade', async () => {
-      const trade = await tradeHistory.recordBuy({
+      const trade = await tradeStorage.saveTrade({
+        id: 'test-1',
         botId: 'bot-1',
         botName: 'Test Bot',
         tokenAddress: '0x1234567890123456789012345678901234567890',
         tokenSymbol: 'TEST',
+        action: 'buy',
         amount: '1000000000000000000', // 1 token in wei
-        amountEth: '1000000000000000', // 0.001 ETH in wei
         price: 0.001,
+        ethValue: '1000000000000000', // 0.001 ETH in wei
         gasCost: '10000000000000', // 0.00001 ETH
-        gasUsed: '100000',
-        gasPrice: '100000000000', // 100 gwei
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+        positionId: 1,
       });
 
-      expect(trade).toBeDefined();
-      expect(trade.action).toBe('buy');
-      expect(trade.botId).toBe('bot-1');
-      expect(trade.tokenSymbol).toBe('TEST');
-      expect(trade.timestamp).toBeDefined();
-      expect(trade.date).toBeDefined();
-      expect(trade.id).toBeDefined();
+      const allTrades = await tradeHistory.getAllTrades();
+      expect(allTrades.length).toBeGreaterThan(0);
+      const savedTrade = allTrades[0];
+      expect(savedTrade.action).toBe('buy');
+      expect(savedTrade.botId).toBe('bot-1');
+      expect(savedTrade.tokenSymbol).toBe('TEST');
+      expect(savedTrade.timestamp).toBeDefined();
+      expect(savedTrade.id).toBeDefined();
     });
 
     it('should record a sell trade with profit', async () => {
-      const trade = await tradeHistory.recordSell({
+      await tradeStorage.saveTrade({
+        id: 'test-2',
         botId: 'bot-1',
         botName: 'Test Bot',
         tokenAddress: '0x1234567890123456789012345678901234567890',
         tokenSymbol: 'TEST',
+        action: 'sell',
         amount: '1000000000000000000',
-        amountEth: '1100000000000000', // 0.0011 ETH (profit)
         price: 0.0011,
+        ethValue: '1100000000000000', // 0.0011 ETH (profit)
         gasCost: '10000000000000',
-        gasUsed: '100000',
-        gasPrice: '100000000000',
         profit: '90000000000000', // 0.00009 ETH profit
         profitPercent: 9.0,
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0xdeadbeef1234567890abcdef1234567890abcdef1234567890abcdef12345678',
+        positionId: 1,
       });
 
-      expect(trade).toBeDefined();
-      expect(trade.action).toBe('sell');
-      expect(trade.profit).toBe('90000000000000');
-      expect(trade.profitPercent).toBe(9.0);
+      const allTrades = await tradeHistory.getAllTrades();
+      const savedTrade = allTrades.find(t => t.action === 'sell');
+      expect(savedTrade).toBeDefined();
+      expect(savedTrade?.action).toBe('sell');
+      expect(savedTrade?.profit).toBe('90000000000000');
+      expect(savedTrade?.profitPercent).toBe(9.0);
     });
   });
 
   describe('getTradesByBot', () => {
     it('should return trades for specific bot', async () => {
       // Record trades for different bots
-      await tradeHistory.recordBuy({
+      await tradeStorage.saveTrade({
+        id: 'trade-1',
         botId: 'bot-1',
         botName: 'Bot One',
         tokenAddress: '0x1234',
         tokenSymbol: 'TKN1',
+        action: 'buy',
         amount: '1000',
-        amountEth: '1000',
         price: 1,
+        ethValue: '1000',
         gasCost: '100',
-        gasUsed: '100',
-        gasPrice: '1',
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0x1',
       });
 
-      await tradeHistory.recordBuy({
+      await tradeStorage.saveTrade({
+        id: 'trade-2',
         botId: 'bot-2',
         botName: 'Bot Two',
         tokenAddress: '0x5678',
         tokenSymbol: 'TKN2',
+        action: 'buy',
         amount: '2000',
-        amountEth: '2000',
         price: 1,
+        ethValue: '2000',
         gasCost: '200',
-        gasUsed: '200',
-        gasPrice: '1',
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0x2',
       });
 
@@ -128,63 +137,62 @@ describe('TradeHistory', () => {
       const oneDay = 24 * 60 * 60 * 1000;
 
       // Manually create trades with specific timestamps
-      await tradeHistory.recordTrade({
+      await tradeStorage.saveTrade({
+        id: 'trade-3',
         botId: 'bot-1',
         botName: 'Test Bot',
         action: 'buy',
         tokenAddress: '0x1234',
         tokenSymbol: 'TEST',
         amount: '1000',
-        amountEth: '1000',
         price: 1,
+        ethValue: '1000',
         gasCost: '100',
-        gasUsed: '100',
-        gasPrice: '1',
-        positionId: 1,
+        timestamp: now,
         txHash: '0x1',
       });
 
       // Get trades from the last day
-      const trades = await tradeHistory.getTradesByDateRange(now - oneDay, now + oneDay);
+      const trades = await tradeHistory.getTradesByDateRange(new Date(now - oneDay), new Date(now + oneDay));
       expect(trades.length).toBeGreaterThan(0);
     });
 
     it('should return empty array for date range with no trades', async () => {
       const now = Date.now();
-      const trades = await tradeHistory.getTradesByDateRange(now - 10000, now - 5000);
+      const trades = await tradeHistory.getTradesByDateRange(new Date(now - 10000), new Date(now - 5000));
       expect(trades).toEqual([]);
     });
   });
 
   describe('getTradesByToken', () => {
     it('should return trades for specific token', async () => {
-      await tradeHistory.recordBuy({
+      await tradeStorage.saveTrade({
+        id: 'trade-4',
         botId: 'bot-1',
         botName: 'Bot One',
         tokenAddress: '0x1234567890123456789012345678901234567890',
         tokenSymbol: 'TOKEN1',
+        action: 'buy',
         amount: '1000',
-        amountEth: '1000',
         price: 1,
+        ethValue: '1000',
         gasCost: '100',
-        gasUsed: '100',
-        gasPrice: '1',
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0x1',
       });
 
-      await tradeHistory.recordBuy({
+      await tradeStorage.saveTrade({
+        id: 'trade-5',
         botId: 'bot-1',
         botName: 'Bot One',
         tokenAddress: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
         tokenSymbol: 'TOKEN2',
+        action: 'buy',
         amount: '2000',
-        amountEth: '2000',
         price: 2,
+        ethValue: '2000',
         gasCost: '200',
-        gasUsed: '200',
-        gasPrice: '1',
-        positionId: 2,
+        timestamp: Date.now(),
         txHash: '0x2',
       });
 
@@ -194,132 +202,95 @@ describe('TradeHistory', () => {
     });
   });
 
-  describe('getStats', () => {
+  describe('getBotStats', () => {
     it('should return correct statistics', async () => {
       // Add multiple trades
-      await tradeHistory.recordBuy({
+      await tradeStorage.saveTrade({
+        id: 'trade-6',
         botId: 'bot-1',
         botName: 'Test Bot',
         tokenAddress: '0x1234',
         tokenSymbol: 'TEST',
+        action: 'buy',
         amount: '1000000000000000000',
-        amountEth: '1000000000000000',
         price: 0.001,
+        ethValue: '1000000000000000',
         gasCost: '10000000000000',
-        gasUsed: '100000',
-        gasPrice: '100000000000',
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0x1',
       });
 
-      await tradeHistory.recordSell({
+      await tradeStorage.saveTrade({
+        id: 'trade-7',
         botId: 'bot-1',
         botName: 'Test Bot',
         tokenAddress: '0x1234',
         tokenSymbol: 'TEST',
+        action: 'sell',
         amount: '1000000000000000000',
-        amountEth: '1100000000000000',
         price: 0.0011,
+        ethValue: '1100000000000000',
         gasCost: '10000000000000',
-        gasUsed: '100000',
-        gasPrice: '100000000000',
         profit: '90000000000000',
         profitPercent: 9,
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0x2',
       });
 
-      await tradeHistory.recordBuy({
+      await tradeStorage.saveTrade({
+        id: 'trade-8',
         botId: 'bot-2',
         botName: 'Bot Two',
         tokenAddress: '0x5678',
         tokenSymbol: 'TEST2',
+        action: 'buy',
         amount: '500000000000000000',
-        amountEth: '500000000000000',
         price: 0.001,
+        ethValue: '500000000000000',
         gasCost: '10000000000000',
-        gasUsed: '100000',
-        gasPrice: '100000000000',
-        positionId: 1,
+        timestamp: Date.now(),
         txHash: '0x3',
       });
 
-      const stats = await tradeHistory.getStats();
+      const stats = await tradeHistory.getBotStats('bot-1');
 
-      expect(stats.totalTrades).toBe(3);
-      expect(stats.totalBuys).toBe(2);
-      expect(stats.totalSells).toBe(1);
-      expect(stats.uniqueBots).toBe(2);
-      expect(stats.totalProfitEth).toBe('90000000000000');
-      expect(stats.dateRange).not.toBeNull();
+      expect(stats.totalTrades).toBe(2);
+      expect(stats.buys).toBe(1);
+      expect(stats.sells).toBe(1);
     });
 
     it('should return zero stats for empty history', async () => {
-      const stats = await tradeHistory.getStats();
+      const stats = await tradeHistory.getBotStats('non-existent');
 
       expect(stats.totalTrades).toBe(0);
-      expect(stats.totalBuys).toBe(0);
-      expect(stats.totalSells).toBe(0);
-      expect(stats.uniqueBots).toBe(0);
-      expect(stats.totalProfitEth).toBe('0');
-      expect(stats.dateRange).toBeNull();
+      expect(stats.buys).toBe(0);
+      expect(stats.sells).toBe(0);
+      expect(stats.totalProfit).toBe('0');
     });
   });
 
-  describe('getRecentTrades', () => {
-    it('should return recent trades sorted by timestamp', async () => {
+  describe('getAllTrades', () => {
+    it('should return all trades sorted by timestamp', async () => {
       // Add trades with slight delays
       for (let i = 0; i < 5; i++) {
-        await tradeHistory.recordBuy({
+        await tradeStorage.saveTrade({
+          id: `trade-${i}`,
           botId: 'bot-1',
           botName: 'Test Bot',
           tokenAddress: '0x1234',
           tokenSymbol: 'TEST',
+          action: 'buy',
           amount: String(1000 * (i + 1)),
-          amountEth: String(1000 * (i + 1)),
           price: 1,
+          ethValue: String(1000 * (i + 1)),
           gasCost: '100',
-          gasUsed: '100',
-          gasPrice: '1',
-          positionId: i,
+          timestamp: Date.now() + i,
           txHash: `0x${i}`,
         });
       }
 
-      const recent = await tradeHistory.getRecentTrades(3);
-      expect(recent).toHaveLength(3);
-      // Should be sorted by timestamp descending (most recent first)
-      expect(Number(recent[0].amount)).toBeGreaterThan(Number(recent[1].amount));
-    });
-  });
-
-  describe('deleteTrade', () => {
-    it('should delete a trade by ID', async () => {
-      const trade = await tradeHistory.recordBuy({
-        botId: 'bot-1',
-        botName: 'Test Bot',
-        tokenAddress: '0x1234',
-        tokenSymbol: 'TEST',
-        amount: '1000',
-        amountEth: '1000',
-        price: 1,
-        gasCost: '100',
-        gasUsed: '100',
-        gasPrice: '1',
-        positionId: 1,
-        txHash: '0x1',
-      });
-
-      const deleted = await tradeHistory.deleteTrade(trade.id);
-      expect(deleted).toBe(true);
-
       const allTrades = await tradeHistory.getAllTrades();
-      expect(allTrades).toHaveLength(0);
-    });
-
-    it('should return false for non-existent trade ID', async () => {
-      const deleted = await tradeHistory.deleteTrade('non-existent-id');
-      expect(deleted).toBe(false);
+      expect(allTrades).toHaveLength(5);
     });
   });
 });

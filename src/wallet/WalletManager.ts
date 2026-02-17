@@ -15,7 +15,21 @@ export class WalletManager {
   private primaryWalletId: string | null = null;
 
   async initialize(password: string): Promise<void> {
+    // Validate password strength
+    if (!password || password.length === 0) {
+      throw new Error('Password cannot be empty');
+    }
+    if (password.length < 8) {
+      throw new Error('Password must be at least 8 characters long');
+    }
     this.password = password;
+  }
+
+  /**
+   * Check if the wallet manager has been initialized with a password
+   */
+  isInitialized(): boolean {
+    return this.password !== null && this.password.length > 0;
   }
 
   /**

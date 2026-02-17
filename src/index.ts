@@ -9,8 +9,13 @@ import { JsonStorage } from './storage/JsonStorage.js';
 import { HeartbeatManager } from './bot/HeartbeatManager.js';
 import { GridCalculator } from './grid/GridCalculator.js';
 import { BotInstance, GridConfig, Position } from './types/index.js';
+import { NotificationService } from './notifications/NotificationService.js';
+import { TelegramBot } from './notifications/TelegramBot.js';
+import { PriceOracle } from './oracle/index.js';
 import { formatEther, createPublicClient } from 'viem';
 import { randomUUID } from 'crypto';
+import { PnLTracker, CsvExporter } from './analytics/index.js';
+import { writeFileSync } from 'fs';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -78,11 +83,25 @@ async function main() {
 
   const walletManager = new WalletManager();
   const zeroXApi = new ZeroXApi(ZEROX_API_KEY);
+  
+  // Initialize PnL Tracker with storage (JsonStorage now includes trade history)
+  const pnLTracker = new PnLTracker(storage);
+  await pnLTracker.init();
+
+  // Initialize Notification Service from environment
+  const notificationService = NotificationService.getInstance();
+  notificationService.initializeFromEnv();
+  if (notificationService.isConfigured()) {
+    console.log(chalk.green('✓ Telegram notifications configured'));
+  }
+
   const heartbeatManager = new HeartbeatManager(
     walletManager,
     zeroXApi,
     storage,
-    RPC_URL
+    RPC_URL,
+    1000, // heartbeatMs
+    pnLTracker
   );
 
   // Load existing bots
@@ -102,12 +121,16 @@ async function main() {
           { name: '⏸️  Enable/Disable bot', value: 'toggle' },
           { name: '📊 View status', value: 'status' },
           { name: '📺 Monitor bots (live)', value: 'monitor' },
+          { name: '📈 View P&L Report', value: 'pnl_report' },
           { name: '💰 Fund wallet', value: 'fund' },
           { name: '👛 View wallet balances', value: 'view_balances' },
           { name: '📤 Send ETH to external', value: 'send_external' },
           { name: '🪙 Send tokens to external', value: 'send_tokens' },
           { name: '🔧 Manage wallets', value: 'manage_wallets' },
+          { name: '🔔 Configure Telegram', value: 'configure_telegram' },
           { name: '🏧 Reclaim funds', value: 'reclaim' },
+          { name: '🔮 Oracle status', value: 'oracle_status' },
+          { name: '⚡ Toggle price validation', value: 'toggle_price_validation' },
           { name: '🗑️  Delete bot', value: 'delete' },
           { name: '❌ Exit', value: 'exit' },
         ],
@@ -139,6 +162,9 @@ async function main() {
         case 'monitor':
           await monitorBots(storage, heartbeatManager);
           break;
+        case 'pnl_report':
+          await showPnlReport(pnLTracker, storage);
+          break;
         case 'fund':
           await fundWallet(walletManager, storage);
           break;
@@ -154,8 +180,17 @@ async function main() {
         case 'manage_wallets':
           await manageWallets(walletManager, storage);
           break;
+        case 'configure_telegram':
+          await configureTelegram();
+          break;
         case 'reclaim':
           await reclaimFunds(walletManager, storage);
+          break;
+        case 'oracle_status':
+          await showOracleStatus();
+          break;
+        case 'toggle_price_validation':
+          await togglePriceValidation(storage, heartbeatManager);
           break;
         case 'delete':
           await deleteBot(heartbeatManager, storage, walletManager);
@@ -2499,6 +2534,564 @@ async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorag
     console.log(chalk.green('\n✓ Bot deleted'));
     console.log(chalk.dim('Note: Bot wallet still exists in storage but is no longer accessible via CLI\n'));
   }
+}
+
+/**
+ * Configure Telegram notifications
+ */
+async function configureTelegram() {
+  console.log(chalk.cyan('\n🔔 Telegram Notification Configuration\n'));
+
+  // Check current configuration
+  const currentToken = process.env.TELEGRAM_BOT_TOKEN;
+  const currentChatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (currentToken && currentChatId) {
+    console.log(chalk.green('✓ Telegram is currently configured'));
+    console.log(chalk.dim(`  Chat ID: ${currentChatId}`));
+    console.log(chalk.dim(`  Token: ${currentToken.slice(0, 10)}...${currentToken.slice(-5)}\n`));
+  } else {
+    console.log(chalk.yellow('⚠ Telegram is not configured'));
+    console.log(chalk.dim('  You need to set up a Telegram bot to receive notifications.\n'));
+    console.log(chalk.cyan('Setup instructions:'));
+    console.log('  1. Message @BotFather on Telegram');
+    console.log('  2. Create a new bot with /newbot');
+    console.log('  3. Copy the bot token');
+    console.log('  4. Message your bot or add it to a group');
+    console.log('  5. Message @userinfobot to get your chat ID\n');
+  }
+
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'What would you like to do?',
+      choices: [
+        { name: currentToken ? '📝 Update configuration' : '📝 Configure Telegram', value: 'configure' },
+        { name: '🧪 Test notification', value: 'test', disabled: !currentToken },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (action === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  if (action === 'configure') {
+    const { botToken, chatId } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'botToken',
+        message: 'Telegram Bot Token (from @BotFather):',
+        default: currentToken || '',
+        validate: (input) => input.length > 0 || 'Bot token is required',
+      },
+      {
+        type: 'input',
+        name: 'chatId',
+        message: 'Telegram Chat ID (from @userinfobot):',
+        default: currentChatId || '',
+        validate: (input) => input.length > 0 || 'Chat ID is required',
+      },
+    ]);
+
+    console.log(chalk.yellow('\n⚠️  About to save Telegram configuration'));
+    console.log(chalk.dim('  This will update your .env file\n'));
+
+    const { confirm } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Save configuration?',
+        default: true,
+      },
+    ]);
+
+    if (!confirm) {
+      console.log(chalk.yellow('Cancelled.\n'));
+      return;
+    }
+
+    // Update environment variables in memory
+    process.env.TELEGRAM_BOT_TOKEN = botToken;
+    process.env.TELEGRAM_CHAT_ID = chatId;
+
+    // Update .env file
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const envPath = path.default.resolve('.env');
+
+      let envContent = '';
+      if (fs.default.existsSync(envPath)) {
+        envContent = fs.default.readFileSync(envPath, 'utf-8');
+      }
+
+      // Update or add TELEGRAM_BOT_TOKEN
+      if (envContent.includes('TELEGRAM_BOT_TOKEN=')) {
+        envContent = envContent.replace(
+          /TELEGRAM_BOT_TOKEN=.*/,
+          `TELEGRAM_BOT_TOKEN=${botToken}`
+        );
+      } else {
+        envContent += `\nTELEGRAM_BOT_TOKEN=${botToken}\n`;
+      }
+
+      // Update or add TELEGRAM_CHAT_ID
+      if (envContent.includes('TELEGRAM_CHAT_ID=')) {
+        envContent = envContent.replace(
+          /TELEGRAM_CHAT_ID=.*/,
+          `TELEGRAM_CHAT_ID=${chatId}`
+        );
+      } else {
+        envContent += `TELEGRAM_CHAT_ID=${chatId}\n`;
+      }
+
+      fs.default.writeFileSync(envPath, envContent);
+
+      console.log(chalk.green('\n✓ Configuration saved to .env'));
+      console.log(chalk.cyan('\n🧪 Testing connection...\n'));
+
+      // Test the connection
+      const bot = new TelegramBot({ botToken, chatId });
+      const result = await bot.testConnection();
+
+      if (result.success) {
+        console.log(chalk.green('✓ Test notification sent successfully!'));
+        console.log(chalk.dim('  Check your Telegram for the test message.\n'));
+      } else {
+        console.log(chalk.red(`✗ Test failed: ${result.message}`));
+        console.log(chalk.yellow('\n⚠ Please verify:'));
+        console.log('  - The bot token is correct');
+        console.log('  - You have messaged the bot at least once');
+        console.log('  - The chat ID is correct\n');
+      }
+    } catch (error: any) {
+      console.log(chalk.red(`\n✗ Failed to save configuration: ${error.message}\n`));
+    }
+  }
+
+  if (action === 'test') {
+    console.log(chalk.cyan('\n🧪 Sending test notification...\n'));
+
+    const bot = TelegramBot.fromEnv();
+    if (!bot) {
+      console.log(chalk.red('✗ Telegram is not properly configured\n'));
+      return;
+    }
+
+    const result = await bot.testConnection();
+
+    if (result.success) {
+      console.log(chalk.green('✓ Test notification sent successfully!'));
+      console.log(chalk.dim('  Check your Telegram for the test message.\n'));
+    } else {
+      console.log(chalk.red(`✗ Test failed: ${result.message}`));
+      console.log(chalk.yellow('\n⚠ Please verify your configuration.\n'));
+    }
+  }
+}
+
+/**
+ * Show P&L Report
+ */
+async function showPnlReport(pnLTracker: PnLTracker, storage: JsonStorage) {
+  console.log(chalk.cyan('\n📈 Profit & Loss Report\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found. Create one first.\n'));
+    return;
+  }
+
+  const allTrades = pnLTracker.getAllTrades();
+  const cumulativePnl = pnLTracker.getCumulativePnL();
+
+  if (allTrades.length === 0) {
+    console.log(chalk.yellow('No trades recorded yet.\n'));
+    return;
+  }
+
+  // Show summary
+  console.log(chalk.yellow('═'.repeat(66)));
+  console.log(chalk.yellow('📊 CUMULATIVE P&L SUMMARY'));
+  console.log(chalk.yellow('═'.repeat(66)));
+  console.log(`  Total Trades:    ${chalk.cyan(cumulativePnl.totalTrades)}`);
+  console.log(`  Total Buys:      ${chalk.cyan(cumulativePnl.totalBuys)}`);
+  console.log(`  Total Sells:     ${chalk.cyan(cumulativePnl.totalSells)}`);
+  console.log(`  Total Profit:    ${chalk.green(formatEther(BigInt(cumulativePnl.totalProfitEth)) + ' ETH')}`);
+  console.log(`  Total Volume:    ${chalk.cyan(formatEther(BigInt(cumulativePnl.totalVolumeEth)) + ' ETH')}`);
+  console.log(`  Period:          ${chalk.dim(new Date(cumulativePnl.startDate).toLocaleDateString())} → ${new Date(cumulativePnl.endDate).toLocaleDateString()}`);
+  console.log();
+
+  // Per-bot breakdown
+  console.log(chalk.yellow('📈 PER-BOT BREAKDOWN'));
+  console.log(chalk.yellow('─'.repeat(66)));
+  console.log(chalk.dim('  Bot Name              Trades    Buys    Sells    Profit (ETH)'));
+  console.log(chalk.dim('  ───────────────────────────────────────────────────────────────'));
+
+  for (const bot of bots) {
+    const botTrades = pnLTracker.getTradesByBot(bot.id);
+    const botBuys = botTrades.filter(t => t.action === 'buy');
+    const botSells = botTrades.filter(t => t.action === 'sell');
+    const botProfit = botSells.reduce((sum, t) => sum + BigInt(t.profit || '0'), BigInt(0));
+    
+    const name = bot.name.slice(0, 20).padEnd(20, ' ');
+    const trades = String(botTrades.length).padStart(6);
+    const buys = String(botBuys.length).padStart(6);
+    const sells = String(botSells.length).padStart(7);
+    const profit = formatEther(botProfit).slice(0, 10).padStart(12);
+    const profitColor = botProfit > 0 ? chalk.green : botProfit < 0 ? chalk.red : chalk.gray;
+    
+    console.log(`  ${name} ${trades} ${buys} ${sells} ${profitColor(profit)}`);
+  }
+  console.log();
+
+  // Recent trades
+  const recentTrades = [...allTrades].sort((a, b) => b.timestamp - a.timestamp).slice(0, 10);
+  console.log(chalk.yellow('📝 RECENT TRADES (Last 10)'));
+  console.log(chalk.yellow('─'.repeat(66)));
+  console.log(chalk.dim('  Time                Bot              Action    Token        Profit'));
+  console.log(chalk.dim('  ───────────────────────────────────────────────────────────────────'));
+
+  for (const trade of recentTrades) {
+    const time = new Date(trade.timestamp).toLocaleTimeString().padEnd(17);
+    const botName = trade.botName.slice(0, 14).padEnd(14);
+    const action = trade.action === 'buy' ? chalk.yellow('BUY ') : chalk.green('SELL');
+    const token = trade.tokenSymbol.slice(0, 10).padEnd(10);
+    const profit = trade.profit ? formatEther(BigInt(trade.profit)).slice(0, 10).padStart(10) : chalk.gray('      —   ');
+    const profitColor = trade.profit && BigInt(trade.profit) > 0 ? chalk.green : chalk.gray;
+    
+    console.log(`  ${time} ${botName} ${action}    ${token} ${profitColor(profit)}`);
+  }
+  console.log();
+
+  // Calculate unrealized P&L
+  let totalUnrealized = BigInt(0);
+  for (const bot of bots) {
+    const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING');
+    for (const pos of holdingPositions) {
+      if (pos.tokensReceived && pos.ethCost) {
+        const currentValue = BigInt(pos.tokensReceived) * BigInt(Math.floor(bot.currentPrice * 1e18)) / BigInt(1e18);
+        const cost = BigInt(pos.ethCost);
+        totalUnrealized += currentValue - cost;
+      }
+    }
+  }
+
+  if (totalUnrealized !== BigInt(0)) {
+    console.log(chalk.yellow('💰 UNREALIZED P&L (Holding Positions)'));
+    console.log(chalk.yellow('─'.repeat(66)));
+    const unrealizedStr = formatEther(totalUnrealized);
+    const color = totalUnrealized > 0 ? chalk.green : totalUnrealized < 0 ? chalk.red : chalk.gray;
+    console.log(`  Unrealized P&L: ${color(unrealizedStr + ' ETH')}`);
+    console.log(chalk.dim('  (Profit/loss if all holding positions were sold now)'));
+    console.log();
+  }
+
+  // Show combined P&L
+  const totalRealized = BigInt(cumulativePnl.totalProfitEth);
+  const combinedPnl = totalRealized + totalUnrealized;
+  console.log(chalk.yellow('📊 COMBINED P&L (Realized + Unrealized)'));
+  console.log(chalk.yellow('─'.repeat(66)));
+  console.log(`  Realized P&L:   ${totalRealized > 0 ? chalk.green : chalk.gray(formatEther(totalRealized) + ' ETH')}`);
+  console.log(`  Unrealized P&L: ${totalUnrealized > 0 ? chalk.green : totalUnrealized < 0 ? chalk.red : chalk.gray(formatEther(totalUnrealized) + ' ETH')}`);
+  const combinedColor = combinedPnl > 0 ? chalk.green.bold : combinedPnl < 0 ? chalk.red.bold : chalk.gray.bold;
+  console.log(`  Combined P&L:   ${combinedColor(formatEther(combinedPnl) + ' ETH')}`);
+  console.log();
+
+  // Menu for export
+  const { action } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'action',
+      message: 'What would you like to do?',
+      choices: [
+        { name: '💾 Export to CSV', value: 'export' },
+        { name: '📅 View daily breakdown', value: 'daily' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (action === 'export') {
+    await exportPnlToCsv(pnLTracker, bots);
+  } else if (action === 'daily') {
+    await showDailyPnlBreakdown(pnLTracker);
+  }
+}
+
+/**
+ * Show daily P&L breakdown
+ */
+async function showDailyPnlBreakdown(pnLTracker: PnLTracker) {
+  console.log(chalk.cyan('\n📅 Daily P&L Breakdown\n'));
+
+  const allTrades = pnLTracker.getAllTrades();
+  if (allTrades.length === 0) {
+    console.log(chalk.yellow('No trades recorded yet.\n'));
+    return;
+  }
+
+  // Get unique dates
+  const dates = new Set<string>();
+  for (const trade of allTrades) {
+    dates.add(new Date(trade.timestamp).toISOString().split('T')[0]);
+  }
+
+  const sortedDates = Array.from(dates).sort().reverse();
+
+  console.log(chalk.yellow('─'.repeat(66)));
+  console.log(chalk.dim('  Date         Trades    Buys    Sells    Volume (ETH)    Profit (ETH)'));
+  console.log(chalk.dim('  ───────────────────────────────────────────────────────────────────'));
+
+  for (const dateStr of sortedDates.slice(0, 14)) { // Last 14 days
+    const date = new Date(dateStr);
+    const dailyPnl = pnLTracker.getDailyPnL(date);
+    
+    for (const day of dailyPnl) {
+      const dateDisplay = dateStr.slice(5); // MM-DD
+      const trades = String(day.buys + day.sells).padStart(6);
+      const buys = String(day.buys).padStart(6);
+      const sells = String(day.sells).padStart(7);
+      const volume = formatEther(BigInt(day.volumeEth)).slice(0, 12).padStart(14);
+      const profit = formatEther(BigInt(day.profitEth)).slice(0, 12).padStart(13);
+      const profitColor = BigInt(day.profitEth) > 0 ? chalk.green : BigInt(day.profitEth) < 0 ? chalk.red : chalk.gray;
+      
+      console.log(`  ${dateDisplay}       ${trades} ${buys} ${sells} ${chalk.cyan(volume)} ${profitColor(profit)}`);
+    }
+  }
+  console.log();
+}
+
+/**
+ * Export P&L to CSV
+ */
+async function exportPnlToCsv(pnLTracker: PnLTracker, bots: BotInstance[]) {
+  console.log(chalk.cyan('\n💾 Export P&L to CSV\n'));
+
+  const allTrades = pnLTracker.getAllTrades();
+  if (allTrades.length === 0) {
+    console.log(chalk.yellow('No trades to export.\n'));
+    return;
+  }
+
+  const { exportType } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'exportType',
+      message: 'What would you like to export?',
+      choices: [
+        { name: '📊 All trades (all bots)', value: 'all' },
+        { name: '🤖 Specific bot', value: 'bot' },
+        { name: '📅 Date range', value: 'range' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (exportType === 'back') {
+    return;
+  }
+
+  let options: { botId?: string; startDate?: Date; endDate?: Date } = {};
+
+  if (exportType === 'bot') {
+    const { botId } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'botId',
+        message: 'Select bot to export:',
+        choices: bots.map(b => ({ name: b.name, value: b.id })),
+      },
+    ]);
+    options.botId = botId;
+  }
+
+  if (exportType === 'range') {
+    const { startDate, endDate } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'startDate',
+        message: 'Start date (YYYY-MM-DD):',
+        default: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || 'Invalid date format',
+      },
+      {
+        type: 'input',
+        name: 'endDate',
+        message: 'End date (YYYY-MM-DD):',
+        default: new Date().toISOString().split('T')[0],
+        validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || 'Invalid date format',
+      },
+    ]);
+    options.startDate = new Date(startDate);
+    options.endDate = new Date(endDate);
+    options.endDate.setHours(23, 59, 59, 999); // End of day
+  }
+
+  // Generate CSV
+  const csv = CsvExporter.exportToCsv(allTrades, {
+    botId: options.botId,
+    startDate: options.startDate,
+    endDate: options.endDate,
+    includeHeaders: true,
+  });
+
+  const filename = CsvExporter.generateFilename(options);
+
+  console.log(chalk.dim(`\nExporting ${allTrades.length} trades...`));
+
+  try {
+    writeFileSync(filename, csv);
+    console.log(chalk.green(`\n✓ Exported to ${filename}`));
+    console.log(chalk.dim(`  Location: ${process.cwd()}/${filename}\n`));
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Export failed: ${error.message}\n`));
+  }
+}
+
+/**
+ * Show Price Oracle status and health
+ */
+async function showOracleStatus() {
+  console.log(chalk.cyan('\n🔮 Price Oracle Status\n'));
+
+  try {
+    const workingRpc = await getWorkingRpc();
+    const oracle = new PriceOracle({
+      rpcUrl: workingRpc,
+      minConfidence: 0.8,
+      allowFallback: true,
+      preferChainlink: true,
+    });
+
+    console.log(chalk.dim('Running health check...\n'));
+
+    const health = await oracle.healthCheck();
+
+    if (health.healthy) {
+      console.log(chalk.green('✓ Oracle Status: HEALTHY'));
+    } else {
+      console.log(chalk.red('✗ Oracle Status: UNHEALTHY'));
+    }
+
+    console.log(`\n${chalk.cyan('Chainlink Feeds:')} ${health.chainlinkWorking ? chalk.green('✓ Working') : chalk.red('✗ Failed')}`);
+    console.log(`${chalk.cyan('Uniswap V3 TWAP:')} ${health.uniswapWorking ? chalk.green('✓ Working') : chalk.red('✗ Failed')}`);
+
+    if (health.ethPrice) {
+      console.log(`\n${chalk.cyan('ETH Price (Chainlink):')} $${health.ethPrice.toFixed(2)}`);
+    } else {
+      console.log(`\n${chalk.yellow('⚠ Could not fetch ETH price')}`);
+    }
+
+    // Test with a common token (WETH)
+    const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
+    console.log(chalk.dim('\nTesting WETH price lookup...'));
+
+    const wethPrice = await oracle.getPrice(WETH_ADDRESS);
+    if (wethPrice) {
+      console.log(`${chalk.cyan('WETH Price:')} ${wethPrice.price.toFixed(6)} ETH`);
+      console.log(`${chalk.cyan('Source:')} ${wethPrice.source}`);
+      console.log(`${chalk.cyan('Confidence:')} ${(wethPrice.confidence * 100).toFixed(1)}%`);
+    }
+
+    // Show supported Chainlink feeds
+    console.log(chalk.cyan('\nSupported Chainlink Feeds:'));
+    const { CHAINLINK_FEEDS } = await import('./oracle/ChainlinkFeed.js');
+    for (const [symbol, address] of Object.entries(CHAINLINK_FEEDS)) {
+      console.log(`  ${chalk.dim(symbol.padEnd(10))} ${address}`);
+    }
+
+    console.log();
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Oracle check failed: ${error.message}\n`));
+  }
+}
+
+/**
+ * Toggle price validation for bots
+ */
+async function togglePriceValidation(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
+  console.log(chalk.cyan('\n⚡ Toggle Price Validation\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found.\n'));
+    return;
+  }
+
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to configure price validation:',
+      choices: [
+        ...bots.map(b => ({
+          name: `${b.name} (${b.tokenSymbol}) - Oracle: ${b.config.usePriceOracle !== false ? chalk.green('ON') : chalk.red('OFF')}`,
+          value: b.id,
+        })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  const bot = bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  const currentStatus = bot.config.usePriceOracle !== false; // Default to true
+  const newStatus = !currentStatus;
+
+  console.log(chalk.yellow(`\n${currentStatus ? 'Disabling' : 'Enabling'} price validation for ${bot.name}`));
+  console.log(chalk.dim(`Current: ${currentStatus ? 'ENABLED' : 'DISABLED'} → New: ${newStatus ? 'ENABLED' : 'DISABLED'}`));
+
+  if (newStatus) {
+    console.log(chalk.green('\n✓ Price validation will:'));
+    console.log(chalk.dim('  - Validate prices using Chainlink + Uniswap TWAP before trades'));
+    console.log(chalk.dim('  - Skip trades if confidence is below 80%'));
+    console.log(chalk.dim('  - Log price confidence for each trade'));
+  } else {
+    console.log(chalk.red('\n⚠ Price validation will be DISABLED:'));
+    console.log(chalk.dim('  - Trades will execute without oracle price checks'));
+    console.log(chalk.dim('  - Only 0x API prices will be used'));
+    console.log(chalk.yellow('  - This increases risk of trading on bad prices!'));
+  }
+
+  const { confirm } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: `Confirm ${newStatus ? 'enable' : 'disable'} price validation?`,
+      default: false,
+    },
+  ]);
+
+  if (!confirm) {
+    console.log(chalk.yellow('Cancelled.\n'));
+    return;
+  }
+
+  // Update bot config
+  bot.config.usePriceOracle = newStatus;
+  bot.lastUpdated = Date.now();
+  await storage.saveBot(bot);
+
+  // Restart bot if running to apply changes
+  if (bot.isRunning) {
+    console.log(chalk.dim('\nRestarting bot to apply changes...'));
+    heartbeatManager.removeBot(bot.id);
+    await heartbeatManager.addBot(bot);
+    console.log(chalk.green('✓ Bot restarted with new settings'));
+  }
+
+  console.log(chalk.green(`\n✓ Price validation is now ${newStatus ? chalk.green('ENABLED') : chalk.red('DISABLED')} for ${bot.name}\n`));
 }
 
 // Start the application

@@ -1,15 +1,15 @@
 // src/analytics/TradeHistory.ts
 
 import { TradeRecord } from './PnLTracker.js';
-import { JsonStorage } from '../storage/JsonStorage.js';
+import { TradeStorage } from './TradeStorage.js';
 
 /**
  * Manages trade history storage and queries
  */
 export class TradeHistory {
-  private storage: JsonStorage;
+  private storage: TradeStorage;
 
-  constructor(storage: JsonStorage) {
+  constructor(storage: TradeStorage) {
     this.storage = storage;
   }
 
@@ -45,6 +45,14 @@ export class TradeHistory {
     const startTime = start.getTime();
     const endTime = end.getTime();
     return all.filter(t => t.timestamp >= startTime && t.timestamp <= endTime);
+  }
+
+  /**
+   * Get trades by token address
+   */
+  async getTradesByToken(tokenAddress: string): Promise<TradeRecord[]> {
+    const all = await this.getAllTrades();
+    return all.filter(t => t.tokenAddress.toLowerCase() === tokenAddress.toLowerCase());
   }
 
   /**

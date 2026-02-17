@@ -51,7 +51,7 @@ describe('Security: Encryption Tests', () => {
       expect(walletFile).not.toMatch(/0x[0-9a-fA-F]{64}/);
       
       // Should not contain raw hex that looks like a private key
-      const privateKeyPattern = /[\"'][0-9a-fA-F]{64}[\"']/;
+      const privateKeyPattern = /["'][0-9a-fA-F]{64}["']/;
       expect(walletFile).not.toMatch(privateKeyPattern);
     });
 

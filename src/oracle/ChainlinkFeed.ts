@@ -1,7 +1,7 @@
 // src/oracle/ChainlinkFeed.ts
 // Chainlink Price Feed integration for Base mainnet
 
-import { PublicClient, parseAbi } from 'viem';
+import { parseAbi } from 'viem';
 
 // Chainlink Price Feed ABI (minimal for price queries)
 const AGGREGATOR_ABI = parseAbi([
@@ -9,12 +9,6 @@ const AGGREGATOR_ABI = parseAbi([
   'function decimals() external view returns (uint8)',
   'function description() external view returns (string)',
   'function getRoundData(uint80 _roundId) external view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
-]);
-
-// Chainlink Feed Registry ABI (for looking up feeds dynamically)
-const FEED_REGISTRY_ABI = parseAbi([
-  'function getFeed(address base, address quote) external view returns (address aggregator)',
-  'function latestRoundData(address base, address quote) external view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
 ]);
 
 // Base mainnet Chainlink Price Feed addresses
@@ -31,22 +25,22 @@ export const CHAINLINK_FEEDS: Record<string, string> = {
   'WSTETH': '0xc1F6C5B4E1F8f6E4b5E5c5E8B4E4b5E5c5E8B4E', // wstETH/USD (placeholder - verify on mainnet)
 };
 
-// Token address to symbol mapping for feed lookup
+// Token address to symbol mapping for feed lookup (all lowercase for case-insensitive matching)
 export const TOKEN_TO_FEED: Record<string, string> = {
   // ETH (wrapped)
   '0x4200000000000000000000000000000000000006': 'ETH', // WETH
   // USDC
-  '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913': 'USDC',
+  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
   // USDbC
-  '0xd9aAEc86B65D86f6A7B5B1b0c42FFA531710b6CA': 'USDbC',
+  '0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca': 'USDbC',
   // DAI
-  '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb': 'DAI',
+  '0x50c5725949a6f0c72e6c4a641f24049a917db0cb': 'DAI',
   // WBTC
-  '0x1ceA84203673764244E05693e42E6Ace62bD6d33': 'WBTC',
+  '0x1cea84203673764244e05693e42e6ace62bd6d33': 'WBTC',
   // LINK
-  '0x88Fb150BDc53A65fe94Dea0c9BA0a6dAf8C6e326': 'LINK',
+  '0x88fb150bdc53a65fe94dea0c9ba0a6daf8c6e326': 'LINK',
   // cbETH
-  '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22': 'CBETH',
+  '0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22': 'CBETH',
 };
 
 export interface ChainlinkPriceData {
@@ -63,10 +57,10 @@ export interface ChainlinkConfig {
 }
 
 export class ChainlinkFeed {
-  private publicClient: PublicClient;
+  private publicClient: any;
   private config: Required<ChainlinkConfig>;
 
-  constructor(publicClient: PublicClient, config: ChainlinkConfig = {}) {
+  constructor(publicClient: any, config: ChainlinkConfig = {}) {
     this.publicClient = publicClient;
     this.config = {
       stalePriceThresholdMs: config.stalePriceThresholdMs ?? 60 * 60 * 1000, // 1 hour
@@ -118,7 +112,7 @@ export class ChainlinkFeed {
         }),
       ]);
 
-      const [roundId, answer, startedAt, updatedAt, answeredInRound] = roundData;
+      const [roundId, answer, , updatedAt, answeredInRound] = roundData;
 
       // Check for invalid data
       if (answer <= 0) {
@@ -206,7 +200,7 @@ export class ChainlinkFeed {
         }),
       ]);
 
-      const [, answer, , updatedAt, answeredInRound] = roundData;
+      const [retrievedRoundId, answer, , updatedAt, answeredInRound] = roundData;
 
       if (answer <= 0) {
         return null;
@@ -218,7 +212,7 @@ export class ChainlinkFeed {
         price,
         decimals,
         timestamp: Number(updatedAt),
-        roundId,
+        roundId: retrievedRoundId,
         answeredInRound,
       };
     } catch (error: any) {

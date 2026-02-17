@@ -31,7 +31,6 @@ export class TradingBot {
   // Price Oracle for reliable price validation
   private priceOracle: PriceOracle | null = null;
   private lastOraclePrice: PriceData | null = null;
-  private lastPriceValidation: ValidationResult | null = null;
   private oracleValidationEnabled: boolean = true;
   private minPriceConfidence: number = 0.8; // 80% minimum confidence
 
@@ -49,7 +48,9 @@ export class TradingBot {
     this.zeroXApi = zeroXApi;
     this.storage = storage;
     this.rpcUrl = rpcUrl;
-    this.oracleValidationEnabled = enablePriceOracle;
+    // Use config setting if provided, otherwise fall back to parameter
+    this.oracleValidationEnabled = instance.config.usePriceOracle !== undefined ? instance.config.usePriceOracle : enablePriceOracle;
+    this.minPriceConfidence = instance.config.minPriceConfidence ?? 0.8;
     this.pnLTracker = pnLTracker || null;
   }
 
@@ -169,7 +170,6 @@ export class TradingBot {
     // Validate price using oracle before buying
     if (this.oracleValidationEnabled && this.priceOracle) {
       const validation = await this.validatePriceForTrading();
-      this.lastPriceValidation = validation;
       
       if (!validation.valid) {
         console.log(`\n⏸ Buy opportunity found but price confidence too low: ${validation.reason}`);
@@ -455,6 +455,26 @@ export class TradingBot {
         position.tokensReceived = quote.buyAmount;
         position.ethCost = amountWei.toString();
 
+        // Record trade in PnL tracker
+        if (this.pnLTracker) {
+          try {
+            const gasCostWei = receipt.gasUsed * BigInt(quote.gasPrice);
+            const price = Number(formatEther(amountWei)) / Number(formatEther(BigInt(quote.buyAmount)));
+            
+            await this.pnLTracker.recordBuy(
+              this.instance,
+              position.id,
+              quote.buyAmount,
+              price,
+              amountWei.toString(),
+              gasCostWei.toString(),
+              txHash
+            );
+          } catch (error: any) {
+            console.warn(`   ⚠ Failed to record buy in PnL tracker: ${error.message}`);
+          }
+        }
+
         return {
           success: true,
           txHash,
@@ -571,26 +591,19 @@ export class TradingBot {
         // Record trade in PnL tracker
         if (this.pnLTracker) {
           try {
-            const gasCost = gasCostWei.toString();
             const price = Number(formatEther(ethReceived)) / Number(formatEther(BigInt(tokenAmount)));
             
-            await this.pnLTracker.recordSell({
-              botId: this.instance.id,
-              botName: this.instance.name,
-              tokenAddress: this.instance.tokenAddress,
-              tokenSymbol: this.instance.tokenSymbol,
-              amount: tokenAmount,
-              amountEth: ethReceived.toString(),
-              price: price,
-              gasCost: gasCost,
-              gasUsed: receipt.gasUsed.toString(),
-              gasPrice: quote.gasPrice,
-              profit: profit.toString(),
-              profitPercent: profitPercent,
-              positionId: position.id,
-              txHash: txHash,
-              blockNumber: Number(receipt.blockNumber),
-            });
+            await this.pnLTracker.recordSell(
+              this.instance,
+              position.id,
+              tokenAmount,
+              price,
+              ethReceived.toString(),
+              gasCostWei.toString(),
+              profit.toString(),
+              profitPercent,
+              txHash
+            );
           } catch (error: any) {
             console.warn(`   ⚠ Failed to record sell in PnL tracker: ${error.message}`);
           }

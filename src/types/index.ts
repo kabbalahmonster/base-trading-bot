@@ -37,6 +37,10 @@ export interface GridConfig {
   buyAmount: number;           // ETH amount per buy (0 = auto-calculate)
   useFixedBuyAmount: boolean;  // Default: false (auto-calculate based on balance)
   
+  // Price Oracle settings
+  usePriceOracle?: boolean;    // Default: true (use Chainlink + Uniswap TWAP for price validation)
+  minPriceConfidence?: number; // Default: 0.8 (80% minimum confidence)
+  
   // Timing
   heartbeatMs: number;         // Default: 1000ms
   skipHeartbeats: number;      // Default: 0 (run every heartbeat)

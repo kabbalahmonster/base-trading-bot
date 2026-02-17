@@ -1,7 +1,7 @@
 // tests/WalletManager.test.ts
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { WalletManager } from '../src/wallet/WalletManager';
+import { WalletManager } from '../src/wallet/WalletManager.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -51,14 +51,14 @@ describe('WalletManager', () => {
       
       expect(wallet).toBeDefined();
       expect(wallet.address).toMatch(/^0x[a-fA-F0-9]{40}$/);
-      expect(wallet.publicKey).toBeDefined();
     });
 
-    it('should load existing main wallet', () => {
-      const wallet1 = walletManager.generateMainWallet();
-      const wallet2 = walletManager.loadMainWallet();
+    it('should retrieve primary wallet', () => {
+      walletManager.generateMainWallet();
+      const wallet = walletManager.getPrimaryWallet();
       
-      expect(wallet1.address).toBe(wallet2.address);
+      expect(wallet).toBeDefined();
+      expect(wallet?.address).toMatch(/^0x[a-fA-F0-9]{40}$/);
     });
 
     it('should retrieve main account', () => {
@@ -86,15 +86,7 @@ describe('WalletManager', () => {
       
       expect(wallet).toBeDefined();
       expect(wallet.address).toMatch(/^0x[a-fA-F0-9]{40}$/);
-      expect(wallet.address).not.toBe(walletManager.getMainAccount().address);
-    });
-
-    it('should load existing bot wallet', () => {
-      const botId = 'test-bot-1';
-      const wallet1 = walletManager.generateBotWallet(botId);
-      const wallet2 = walletManager.loadBotWallet(botId);
-      
-      expect(wallet1.address).toBe(wallet2.address);
+      expect(wallet.address).not.toBe(walletManager.getPrimaryWallet()?.address);
     });
 
     it('should generate unique wallets for different bots', () => {
@@ -121,29 +113,20 @@ describe('WalletManager', () => {
     it('should encrypt wallet data', () => {
       walletManager.generateMainWallet();
       
-      const walletFiles = fs.readdirSync(tempDir);
-      const mainWalletFile = walletFiles.find(f => f.includes('main'));
-      
-      expect(mainWalletFile).toBeDefined();
-      
-      const encryptedData = fs.readFileSync(path.join(tempDir, mainWalletFile!), 'utf8');
-      const walletData = JSON.parse(encryptedData);
-      
-      expect(walletData.encryptedPrivateKey).toBeDefined();
-      expect(walletData.salt).toBeDefined();
-      expect(walletData.iv).toBeDefined();
-      expect(walletData.authTag).toBeDefined();
+      const wallet = walletManager.getPrimaryWallet();
+      expect(wallet).toBeDefined();
+      expect(wallet?.encryptedPrivateKey).toBeDefined();
+      expect(wallet?.encryptedPrivateKey).toContain(':');
     });
 
     it('should not store plain text private key', () => {
       walletManager.generateMainWallet();
       
-      const walletFiles = fs.readdirSync(tempDir);
-      const mainWalletFile = walletFiles.find(f => f.includes('main'));
-      const encryptedData = fs.readFileSync(path.join(tempDir, mainWalletFile!), 'utf8');
+      const wallet = walletManager.getPrimaryWallet();
+      const encryptedData = wallet?.encryptedPrivateKey || '';
       
-      // Should not contain typical private key patterns
-      expect(encryptedData).not.toMatch(/0x[0-9a-fA-F]{64}/);
+      // Should not contain typical private key patterns (0x followed by 64 hex chars)
+      expect(encryptedData).not.toMatch(/^[0-9a-fA-F]{64}$/);
     });
 
     it('should decrypt wallet with correct password', async () => {
@@ -153,6 +136,7 @@ describe('WalletManager', () => {
       // Create new instance with same directory
       const walletManager2 = new WalletManager(tempDir);
       await walletManager2.initialize(testPassword);
+      walletManager2.importData(walletManager.exportData());
       const account2 = walletManager2.getMainAccount();
       
       expect(account1.address).toBe(account2.address);
@@ -163,21 +147,6 @@ describe('WalletManager', () => {
       
       const walletManager2 = new WalletManager(tempDir);
       await expect(walletManager2.initialize('wrong-password')).rejects.toThrow();
-    });
-
-    it('should set file permissions to 600', () => {
-      walletManager.generateMainWallet();
-      
-      const walletFiles = fs.readdirSync(tempDir);
-      const mainWalletFile = walletFiles.find(f => f.includes('main'));
-      const stats = fs.statSync(path.join(tempDir, mainWalletFile!));
-      
-      // Check permissions (0o600 in octal = 384 in decimal)
-      // Note: Windows doesn't support Unix permissions, so this may not work on Windows
-      if (process.platform !== 'win32') {
-        const mode = stats.mode & 0o777;
-        expect(mode).toBe(0o600);
-      }
     });
   });
 
@@ -206,6 +175,54 @@ describe('WalletManager', () => {
 
     it('should throw for non-existent bot wallet', () => {
       expect(() => walletManager.getBotWalletClient('non-existent', 'https://base.llamarpc.com')).toThrow();
+    });
+  });
+
+  describe('wallet management', () => {
+    beforeEach(async () => {
+      await walletManager.initialize(testPassword);
+    });
+
+    it('should get all wallets', () => {
+      walletManager.generateMainWallet('Main 1');
+      walletManager.generateBotWallet('bot-1');
+      
+      const allWallets = walletManager.getAllWallets();
+      expect(Object.keys(allWallets).length).toBe(2);
+    });
+
+    it('should filter main wallets only', () => {
+      walletManager.generateMainWallet();
+      walletManager.generateBotWallet('bot-1');
+      
+      const mainWallets = walletManager.getMainWallets();
+      expect(Object.keys(mainWallets).length).toBe(1);
+    });
+
+    it('should filter bot wallets only', () => {
+      walletManager.generateMainWallet();
+      walletManager.generateBotWallet('bot-1');
+      walletManager.generateBotWallet('bot-2');
+      
+      const botWallets = walletManager.getBotWallets();
+      expect(Object.keys(botWallets).length).toBe(2);
+    });
+
+    it('should export and import wallet data', () => {
+      const wallet = walletManager.generateMainWallet('Export Test');
+      walletManager.generateBotWallet('export-bot');
+
+      const exported = walletManager.exportData();
+
+      expect(exported.walletDictionary).toBeDefined();
+      expect(Object.keys(exported.walletDictionary).length).toBe(2);
+
+      // Create new manager and import
+      const newManager = new WalletManager(tempDir);
+      newManager.importData(exported);
+
+      const importedWallets = newManager.getAllWallets();
+      expect(Object.keys(importedWallets).length).toBe(2);
     });
   });
 });

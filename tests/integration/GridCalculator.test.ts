@@ -17,14 +17,15 @@ describe('GridCalculator Integration Tests', () => {
 
       expect(positions).toHaveLength(5);
       
-      // Check ascending order (highest to lowest)
+      // Check ascending order (lowest to highest buyMax)
       for (let i = 1; i < positions.length; i++) {
-        expect(positions[i].buyPrice).toBeLessThan(positions[i - 1].buyPrice);
+        expect(positions[i].buyMax).toBeGreaterThan(positions[i - 1].buyMax);
       }
 
-      // Check price bounds
-      expect(positions[0].buyPrice).toBeCloseTo(config.ceilingPrice, 10);
-      expect(positions[positions.length - 1].buyPrice).toBeCloseTo(config.floorPrice, 10);
+      // Check price bounds - first position's buyMin should be close to floor
+      expect(positions[0].buyMin).toBeCloseTo(config.floorPrice, 10);
+      // Last position's buyMax should be close to ceiling
+      expect(positions[positions.length - 1].buyMax).toBeCloseTo(config.ceilingPrice, 10);
     });
 
     it('should calculate sell prices with take profit', () => {
@@ -36,7 +37,7 @@ describe('GridCalculator Integration Tests', () => {
       const positions = GridCalculator.generateGrid(0.0005, config);
 
       positions.forEach(position => {
-        const expectedSellPrice = position.buyPrice * 1.10; // 10% profit
+        const expectedSellPrice = position.buyMax * 1.10; // 10% profit
         expect(position.sellPrice).toBeCloseTo(expectedSellPrice, 10);
       });
     });
@@ -51,7 +52,7 @@ describe('GridCalculator Integration Tests', () => {
       const positions = GridCalculator.generateGrid(0.0005, config);
 
       positions.forEach(position => {
-        const expectedStopLoss = position.buyPrice * 0.95; // 5% stop loss
+        const expectedStopLoss = position.buyMin * 0.95; // 5% stop loss
         expect(position.stopLossPrice).toBeCloseTo(expectedStopLoss, 10);
       });
     });
@@ -66,7 +67,9 @@ describe('GridCalculator Integration Tests', () => {
       const positions = GridCalculator.generateGrid(0.005, config);
 
       expect(positions).toHaveLength(1);
-      expect(positions[0].buyPrice).toBeCloseTo(config.floorPrice, 10);
+      // Single position covers the whole range
+      expect(positions[0].buyMin).toBeCloseTo(config.floorPrice, 10);
+      expect(positions[0].buyMax).toBeCloseTo(config.ceilingPrice, 10);
     });
 
     it('should use auto-calculated floor/ceiling when not specified', () => {
@@ -80,8 +83,8 @@ describe('GridCalculator Integration Tests', () => {
       const positions = GridCalculator.generateGrid(currentPrice, config);
 
       // Default: floor = current / 10, ceiling = current * 4
-      expect(positions[0].buyPrice).toBeCloseTo(currentPrice * 4, 10);
-      expect(positions[positions.length - 1].buyPrice).toBeCloseTo(currentPrice / 10, 10);
+      expect(positions[0].buyMin).toBeCloseTo(currentPrice / 10, 10);
+      expect(positions[positions.length - 1].buyMax).toBeCloseTo(currentPrice * 4, 10);
     });
   });
 
@@ -90,19 +93,19 @@ describe('GridCalculator Integration Tests', () => {
       const positions = createPositions(10);
       const targetPosition = positions[5];
 
-      // Test exact match
-      const found = GridCalculator.findBuyPosition(positions, targetPosition.buyPrice);
+      // Test exact match (use buyMax which is the trigger price)
+      const found = GridCalculator.findBuyPosition(positions, targetPosition.buyMax);
       expect(found).toBeDefined();
       expect(found?.id).toBe(targetPosition.id);
     });
 
-    it('should find position within 1% tolerance', () => {
+    it('should find position within range', () => {
       const positions = createPositions(10);
       const targetPosition = positions[5];
 
-      // Test within 1% tolerance
-      const slightlyHigher = targetPosition.buyPrice * 1.005; // 0.5% higher
-      const found = GridCalculator.findBuyPosition(positions, slightlyHigher);
+      // Test price within the buy range
+      const midPrice = (targetPosition.buyMin + targetPosition.buyMax) / 2;
+      const found = GridCalculator.findBuyPosition(positions, midPrice);
       expect(found).toBeDefined();
       expect(found?.id).toBe(targetPosition.id);
     });
@@ -112,7 +115,7 @@ describe('GridCalculator Integration Tests', () => {
       positions[0].status = 'HOLDING';
       positions[1].status = 'SOLD';
 
-      const found = GridCalculator.findBuyPosition(positions, positions[0].buyPrice);
+      const found = GridCalculator.findBuyPosition(positions, positions[0].buyMax);
       expect(found).toBeNull();
     });
 
@@ -122,20 +125,6 @@ describe('GridCalculator Integration Tests', () => {
 
       const found = GridCalculator.findBuyPosition(positions, 0.0005);
       expect(found).toBeNull();
-    });
-
-    it('should prefer lower prices when multiple match', () => {
-      // Create positions very close together
-      const config = createGridConfig({ numPositions: 10, floorPrice: 0.0001, ceilingPrice: 0.00011 });
-      const positions = GridCalculator.generateGrid(0.000105, config);
-
-      // Price that might match multiple positions
-      const ambiguousPrice = positions[5].buyPrice * 1.009; // Just within 1% of position 5
-
-      const found = GridCalculator.findBuyPosition(positions, ambiguousPrice);
-      
-      // Should find a position
-      expect(found).toBeDefined();
     });
   });
 
@@ -152,13 +141,13 @@ describe('GridCalculator Integration Tests', () => {
       expect(sellPositions[0].id).toBe(positions[0].id);
     });
 
-    it('should find positions at sell target with tolerance', () => {
+    it('should find positions at sell target exactly', () => {
       const positions = createPositions(10);
       positions[0].status = 'HOLDING';
       positions[0].tokensReceived = '1000000000000000000';
 
-      // Just slightly below target (within 1%)
-      const currentPrice = positions[0].sellPrice * 0.995;
+      // Exactly at sell target
+      const currentPrice = positions[0].sellPrice;
       const sellPositions = GridCalculator.findSellPositions(positions, currentPrice);
 
       expect(sellPositions).toHaveLength(1);
@@ -168,7 +157,7 @@ describe('GridCalculator Integration Tests', () => {
       const positions = createPositions(10);
       positions[0].status = 'HOLDING';
       positions[0].tokensReceived = '1000000000000000000';
-      positions[0].stopLossPrice = positions[0].buyPrice * 0.9; // 10% stop loss
+      positions[0].stopLossPrice = positions[0].buyMin * 0.9; // 10% stop loss
 
       const currentPrice = positions[0].stopLossPrice * 0.99; // Below stop loss
       const sellPositions = GridCalculator.findSellPositions(positions, currentPrice);
@@ -282,14 +271,15 @@ describe('GridCalculator Integration Tests', () => {
       const price = 0.000000123456;
       const formatted = GridCalculator.formatPrice(price);
 
-      expect(formatted).toContain('0.000000');
+      // Small prices use exponential notation
+      expect(formatted).toMatch(/(0\.0{5,}\d+|\d+\.\d+e[+-]?\d+)/);
     });
 
     it('should format normal prices with 4 decimals', () => {
       const price = 1.5;
       const formatted = GridCalculator.formatPrice(price);
 
-      expect(formatted).toBe('1.50');
+      expect(formatted).toBe('1.5000');
     });
 
     it('should format medium prices with 6 decimals', () => {

@@ -29,11 +29,11 @@ describe('GridCalculator', () => {
       expect(positions).toHaveLength(10);
     });
 
-    it('should calculate prices in descending order', () => {
+    it('should calculate prices in ascending order', () => {
       const positions = GridCalculator.generateGrid(0.0005, baseConfig);
       
       for (let i = 1; i < positions.length; i++) {
-        expect(positions[i].buyPrice).toBeLessThan(positions[i - 1].buyPrice);
+        expect(positions[i].buyPrice).toBeGreaterThan(positions[i - 1].buyPrice);
       }
     });
 
@@ -192,17 +192,17 @@ describe('GridCalculator', () => {
   describe('formatPrice', () => {
     it('should format small prices with high precision', () => {
       const formatted = GridCalculator.formatPrice(0.000001234);
-      expect(formatted).toContain('0.000001');
+      expect(formatted).toBe('1.2340e-6');
     });
 
     it('should format larger prices with fewer decimals', () => {
       const formatted = GridCalculator.formatPrice(1.5);
-      expect(formatted).toBe('1.50');
+      expect(formatted).toBe('1.5000');
     });
 
     it('should handle very small prices', () => {
       const formatted = GridCalculator.formatPrice(0.000000001);
-      expect(formatted).toContain('0.000000');
+      expect(formatted).toBe('1.0000e-9');
     });
   });
 });

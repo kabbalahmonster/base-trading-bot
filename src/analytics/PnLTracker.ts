@@ -1,7 +1,7 @@
 // src/analytics/PnLTracker.ts
 
 import { BotInstance } from '../types/index.js';
-import { JsonStorage } from '../storage/JsonStorage.js';
+import { TradeStorage } from './TradeStorage.js';
 
 export interface TradeRecord {
   id: string;
@@ -44,10 +44,10 @@ export interface CumulativePnL {
  * Tracks profit and loss for trading bots
  */
 export class PnLTracker {
-  private storage: JsonStorage;
+  private storage: TradeStorage;
   private trades: TradeRecord[] = [];
 
-  constructor(storage: JsonStorage) {
+  constructor(storage: TradeStorage) {
     this.storage = storage;
   }
 
@@ -164,7 +164,6 @@ export class PnLTracker {
     }
 
     return Array.from(byBot.entries()).map(([botId, trades]) => {
-      const botName = trades[0]?.botName || botId;
       const buys = trades.filter(t => t.action === 'buy');
       const sells = trades.filter(t => t.action === 'sell');
       const profit = sells.reduce((sum, t) => sum + BigInt(t.profit || '0'), BigInt(0));

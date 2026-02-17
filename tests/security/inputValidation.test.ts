@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { GridCalculator } from '../../src/grid/GridCalculator.js';
 import { createGridConfig, createPosition, TEST_ADDRESSES } from '../utils/index.js';
+import { parseBigIntStrict, isValidBigIntString } from '../../src/utils/validation.js';
 
 describe('Security: Input Validation Tests', () => {
   
@@ -125,19 +126,25 @@ describe('Security: Input Validation Tests', () => {
 
     it('should handle extreme stop loss percentages', () => {
       const testCases = [
-        { stopLoss: 1, enabled: true },
-        { stopLoss: 99, enabled: true },
-        { stopLoss: 100, enabled: true },
+        { stopLoss: 1, enabled: true, expectPositive: true },
+        { stopLoss: 99, enabled: true, expectPositive: true },
+        { stopLoss: 100, enabled: true, expectPositive: false }, // 100% stop loss = price of 0
       ];
       
-      for (const { stopLoss, enabled } of testCases) {
+      for (const { stopLoss, enabled, expectPositive } of testCases) {
         const config = createGridConfig({
           stopLossEnabled: enabled,
           stopLossPercent: stopLoss,
         });
         
         const positions = GridCalculator.generateGrid(0.0005, config);
-        expect(positions[0].stopLossPrice).toBeGreaterThan(0);
+        // Stop loss price is clamped to valid range (0-100)
+        // 100% stop loss means price goes to 0
+        if (expectPositive) {
+          expect(positions[0].stopLossPrice).toBeGreaterThan(0);
+        } else {
+          expect(positions[0].stopLossPrice).toBe(0);
+        }
       }
     });
   });
@@ -211,9 +218,10 @@ describe('Security: Input Validation Tests', () => {
         '1000000000000000000',
         '999999999999999999999999999',
       ];
-      
+
       for (const amount of validAmounts) {
-        expect(() => BigInt(amount)).not.toThrow();
+        expect(() => parseBigIntStrict(amount)).not.toThrow();
+        expect(isValidBigIntString(amount)).toBe(true);
       }
     });
 
@@ -224,9 +232,10 @@ describe('Security: Input Validation Tests', () => {
         '',
         '0xGG',
       ];
-      
+
       for (const amount of invalidAmounts) {
-        expect(() => BigInt(amount)).toThrow();
+        expect(() => parseBigIntStrict(amount)).toThrow();
+        expect(isValidBigIntString(amount)).toBe(false);
       }
     });
 
@@ -237,9 +246,10 @@ describe('Security: Input Validation Tests', () => {
         '0xde0b6b3a7640000', // 1 ETH in wei
         '0x' + 'f'.repeat(64),
       ];
-      
+
       for (const amount of hexAmounts) {
-        expect(() => BigInt(amount)).not.toThrow();
+        expect(() => parseBigIntStrict(amount)).not.toThrow();
+        expect(isValidBigIntString(amount)).toBe(true);
       }
     });
   });

@@ -5,6 +5,7 @@ import { BotInstance } from '../types/index.js';
 import { WalletManager } from '../wallet/WalletManager.js';
 import { ZeroXApi } from '../api/ZeroXApi.js';
 import { JsonStorage } from '../storage/JsonStorage.js';
+import { PnLTracker } from '../analytics/PnLTracker.js';
 
 export class HeartbeatManager {
   private bots: Map<string, TradingBot> = new Map();
@@ -12,6 +13,7 @@ export class HeartbeatManager {
   private zeroXApi: ZeroXApi;
   private storage: JsonStorage;
   private rpcUrl: string;
+  private pnLTracker: PnLTracker | null = null;
   
   private isRunning: boolean = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
@@ -23,13 +25,33 @@ export class HeartbeatManager {
     zeroXApi: ZeroXApi,
     storage: JsonStorage,
     rpcUrl: string,
-    heartbeatMs: number = 1000
+    heartbeatMs: number = 1000,
+    pnLTracker?: PnLTracker
   ) {
     this.walletManager = walletManager;
     this.zeroXApi = zeroXApi;
     this.storage = storage;
     this.rpcUrl = rpcUrl;
     this.heartbeatMs = heartbeatMs;
+    this.pnLTracker = pnLTracker || null;
+  }
+
+  /**
+   * Set the PnL tracker
+   */
+  setPnLTracker(pnLTracker: PnLTracker): void {
+    this.pnLTracker = pnLTracker;
+    // Update existing bots with the tracker
+    for (const bot of this.bots.values()) {
+      bot.setPnLTracker(pnLTracker);
+    }
+  }
+
+  /**
+   * Get the PnL tracker
+   */
+  getPnLTracker(): PnLTracker | null {
+    return this.pnLTracker;
   }
 
   /**
@@ -54,7 +76,9 @@ export class HeartbeatManager {
       this.walletManager,
       this.zeroXApi,
       this.storage,
-      this.rpcUrl
+      this.rpcUrl,
+      true, // enablePriceOracle
+      this.pnLTracker || undefined
     );
 
     await bot.init();

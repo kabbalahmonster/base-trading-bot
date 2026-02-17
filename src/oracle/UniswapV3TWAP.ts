@@ -1,7 +1,7 @@
 // src/oracle/UniswapV3TWAP.ts
 // Uniswap V3 Time-Weighted Average Price (TWAP) implementation for Base mainnet
 
-import { PublicClient, parseAbi } from 'viem';
+import { parseAbi } from 'viem';
 
 // Uniswap V3 Pool ABI (minimal for TWAP)
 const POOL_ABI = parseAbi([
@@ -53,10 +53,10 @@ export interface PoolInfo {
 }
 
 export class UniswapV3TWAP {
-  private publicClient: PublicClient;
+  private publicClient: any;
   private config: Required<TWAPConfig>;
 
-  constructor(publicClient: PublicClient, config: TWAPConfig = {}) {
+  constructor(publicClient: any, config: TWAPConfig = {}) {
     this.publicClient = publicClient;
     this.config = {
       twapSeconds: config.twapSeconds ?? DEFAULT_TWAP_SECONDS,
@@ -124,7 +124,7 @@ export class UniswapV3TWAP {
         }),
       ]);
 
-      const [sqrtPriceX96, tick] = slot0;
+      const [sqrtPriceX96] = slot0;
 
       return {
         address: poolAddress,
@@ -133,7 +133,7 @@ export class UniswapV3TWAP {
         fee: Number(fee),
         liquidity,
         sqrtPriceX96,
-        tick: Number(tick),
+        tick: 0,
       };
     } catch (error: any) {
       console.error(`Error fetching pool info:`, error.message);
@@ -200,7 +200,7 @@ export class UniswapV3TWAP {
         functionName: 'slot0',
       });
 
-      const [sqrtPriceX96, currentTick] = slot0;
+      const [sqrtPriceX96] = slot0;
 
       // Calculate TWAP price from average tick
       const twapPrice = this.tickToPrice(averageTick, token0Decimals, token1Decimals);

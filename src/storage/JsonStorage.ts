@@ -3,18 +3,33 @@
 import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
 import { BotStorage, BotInstance, WalletData, WalletDictionary } from '../types/index.js';
+import { TradeRecord } from '../analytics/PnLTracker.js';
 
 const DEFAULT_DATA: BotStorage = {
   walletDictionary: {},
   bots: [],
 };
 
+interface TradeStorageData {
+  trades: TradeRecord[];
+}
+
+const DEFAULT_TRADE_DATA: TradeStorageData = {
+  trades: [],
+};
+
 export class JsonStorage {
   private db: Low<BotStorage>;
+  private tradeDb: Low<TradeStorageData>;
 
-  constructor(filePath: string = './bots.json') {
+  constructor(filePath: string = './bots.json', tradeFilePath?: string) {
     const adapter = new JSONFile<BotStorage>(filePath);
     this.db = new Low(adapter, DEFAULT_DATA);
+    
+    // If tradeFilePath not provided, derive from filePath (for test isolation)
+    const actualTradeFilePath = tradeFilePath ?? filePath;
+    const tradeAdapter = new JSONFile<TradeStorageData>(actualTradeFilePath);
+    this.tradeDb = new Low(tradeAdapter, DEFAULT_TRADE_DATA);
   }
 
   async init(): Promise<void> {
@@ -42,6 +57,16 @@ export class JsonStorage {
     }
     
     await this.db.write();
+    
+    // Initialize trade history database
+    await this.tradeDb.read();
+    if (!this.tradeDb.data) {
+      this.tradeDb.data = DEFAULT_TRADE_DATA;
+    }
+    if (!this.tradeDb.data.trades) {
+      this.tradeDb.data.trades = [];
+    }
+    await this.tradeDb.write();
   }
 
   // Primary/Main Wallet (backward compatibility)
@@ -61,7 +86,7 @@ export class JsonStorage {
     }
     
     // Find first main wallet
-    for (const [id, wallet] of Object.entries(this.db.data?.walletDictionary || {})) {
+    for (const [, wallet] of Object.entries(this.db.data?.walletDictionary || {})) {
       if (wallet.type === 'main') {
         return wallet;
       }
@@ -210,5 +235,29 @@ export class JsonStorage {
       totalProfitEth: bots.reduce((sum, b) => sum + BigInt(b.totalProfitEth || '0'), BigInt(0)).toString(),
       totalTrades: bots.reduce((sum, b) => sum + b.totalBuys + b.totalSells, 0),
     };
+  }
+
+  // Trade History Methods
+  async getTradeHistory(): Promise<TradeRecord[]> {
+    await this.tradeDb.read();
+    return this.tradeDb.data?.trades || [];
+  }
+
+  async saveTrade(record: TradeRecord): Promise<void> {
+    await this.tradeDb.read();
+    if (!this.tradeDb.data) {
+      this.tradeDb.data = DEFAULT_TRADE_DATA;
+    }
+    this.tradeDb.data.trades.push(record);
+    await this.tradeDb.write();
+  }
+
+  async clearTradeHistory(): Promise<void> {
+    await this.tradeDb.read();
+    if (!this.tradeDb.data) {
+      this.tradeDb.data = DEFAULT_TRADE_DATA;
+    }
+    this.tradeDb.data.trades = [];
+    await this.tradeDb.write();
   }
 }

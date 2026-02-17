@@ -10,6 +10,7 @@ import {
   TradeResult,
 } from '../../src/types/index.js';
 import { TEST_TOKENS, generateTestWallet } from './testWallets.js';
+import { GridCalculator } from '../../src/grid/GridCalculator.js';
 
 /**
  * Factory for creating test GridConfig objects
@@ -39,37 +40,36 @@ export function createGridConfig(overrides: Partial<GridConfig> = {}): GridConfi
 
 /**
  * Factory for creating test Position objects
+ * Uses the new Position interface with buyMin/buyMax
  */
 export function createPosition(overrides: Partial<Position> = {}): Position {
+  const buyMin = overrides.buyMin ?? 0.0004;
+  const buyMax = overrides.buyMax ?? 0.0005;
+  const takeProfitPercent = overrides.takeProfitPercent ?? 8;
+  const stopLossPercent = overrides.stopLossPercent ?? 10;
+  const stopLossEnabled = overrides.stopLossEnabled ?? false;
+  
   return {
     id: 0,
-    buyPrice: 0.0005,
-    sellPrice: 0.00054,
-    stopLossPrice: 0,
+    buyMin,
+    buyMax,
+    buyPrice: buyMax, // Legacy compatibility
+    sellPrice: buyMax * (1 + takeProfitPercent / 100),
+    stopLossPrice: stopLossEnabled ? buyMin * (1 - stopLossPercent / 100) : 0,
     status: 'EMPTY',
     ...overrides,
   };
 }
 
 /**
- * Factory for creating multiple test positions
+ * Factory for creating multiple test positions using the GridCalculator
+ * This ensures positions are generated consistently with the actual implementation
  */
 export function createPositions(count: number, config: Partial<GridConfig> = {}): Position[] {
-  const gridConfig = createGridConfig(config);
-  const positions: Position[] = [];
-  const priceStep = (gridConfig.ceilingPrice - gridConfig.floorPrice) / (count - 1);
-
-  for (let i = 0; i < count; i++) {
-    const buyPrice = gridConfig.floorPrice + (priceStep * i);
-    positions.push(createPosition({
-      id: i,
-      buyPrice,
-      sellPrice: buyPrice * (1 + gridConfig.takeProfitPercent / 100),
-      stopLossPrice: gridConfig.stopLossEnabled ? buyPrice * (1 - gridConfig.stopLossPercent / 100) : 0,
-    }));
-  }
-
-  return positions;
+  const gridConfig = createGridConfig({ ...config, numPositions: count });
+  const currentPrice = (gridConfig.floorPrice + gridConfig.ceilingPrice) / 2;
+  
+  return GridCalculator.generateGrid(currentPrice, gridConfig);
 }
 
 /**
@@ -180,39 +180,30 @@ export function createBotScenario(options: {
   } = options;
 
   const config = createGridConfig({ numPositions });
-  const positions: Position[] = [];
+  
+  // Use GridCalculator to generate positions with proper buyMin/buyMax
+  const positions = GridCalculator.generateGrid(currentPrice, config);
 
-  const priceStep = (config.ceilingPrice - config.floorPrice) / (numPositions - 1);
-
-  for (let i = 0; i < numPositions; i++) {
-    const positionBuyPrice = config.floorPrice + (priceStep * i);
-    let status: Position['status'] = 'EMPTY';
-
+  // Set up holding and sold positions as requested
+  for (let i = 0; i < positions.length; i++) {
     if (i < holdingPositions) {
-      status = 'HOLDING';
+      positions[i].status = 'HOLDING';
+      positions[i].buyTxHash = '0x' + 'b'.repeat(64);
+      positions[i].buyTimestamp = Date.now() - 3600000;
+      positions[i].tokensReceived = '1000000000000000000000';
+      positions[i].ethCost = '1000000000000000';
     } else if (i < holdingPositions + soldPositions) {
-      status = 'SOLD';
+      positions[i].status = 'SOLD';
+      positions[i].buyTxHash = '0x' + 'b'.repeat(64);
+      positions[i].buyTimestamp = Date.now() - 7200000;
+      positions[i].tokensReceived = '1000000000000000000000';
+      positions[i].ethCost = '1000000000000000';
+      positions[i].sellTxHash = '0x' + 'c'.repeat(64);
+      positions[i].sellTimestamp = Date.now();
+      positions[i].ethReceived = '1500000000000000';
+      positions[i].profitEth = '500000000000000';
+      positions[i].profitPercent = 50;
     }
-
-    positions.push(createPosition({
-      id: i,
-      buyPrice: positionBuyPrice,
-      sellPrice: positionBuyPrice * (1 + config.takeProfitPercent / 100),
-      status,
-      ...(status !== 'EMPTY' && {
-        buyTxHash: '0x' + 'b'.repeat(64),
-        buyTimestamp: Date.now() - 3600000,
-        tokensReceived: '1000000000000000000000',
-        ethCost: '1000000000000000',
-      }),
-      ...(status === 'SOLD' && {
-        sellTxHash: '0x' + 'c'.repeat(64),
-        sellTimestamp: Date.now(),
-        ethReceived: '1500000000000000',
-        profitEth: '500000000000000',
-        profitPercent: 50,
-      }),
-    }));
   }
 
   const bot = createBotInstance({

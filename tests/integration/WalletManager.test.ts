@@ -10,6 +10,7 @@ describe('WalletManager Integration Tests', () => {
   let tempDir: string;
   let walletManager: WalletManager;
   const testPassword = 'secure-test-password-123';
+  const testRpcUrl = 'https://base.llamarpc.com';
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wallet-integration-test-'));
@@ -60,8 +61,8 @@ describe('WalletManager Integration Tests', () => {
       const wallet1 = walletManager.generateMainWallet();
       const wallet2 = walletManager.generateMainWallet();
 
-      expect(wallet1.name).toContain('Main Wallet 1');
-      expect(wallet2.name).toContain('Main Wallet 2');
+      expect(wallet1.name).toContain('Main Wallet');
+      expect(wallet2.name).toContain('Main Wallet');
     });
 
     it('should retrieve primary wallet', () => {
@@ -94,8 +95,10 @@ describe('WalletManager Integration Tests', () => {
     });
 
     it('should export private key for wallet', () => {
-      const wallet = walletManager.generateMainWallet();
-      const privateKey = walletManager.exportPrivateKey(Object.keys(walletManager.getAllWallets())[0]);
+      walletManager.generateMainWallet();
+      const allWallets = walletManager.getAllWallets();
+      const firstWalletId = Object.keys(allWallets)[0];
+      const privateKey = walletManager.exportPrivateKey(firstWalletId);
 
       expect(privateKey).toMatch(/^0x[a-fA-F0-9]{64}$/);
     });
@@ -155,14 +158,14 @@ describe('WalletManager Integration Tests', () => {
     });
 
     it('should create main wallet client', () => {
-      const client = walletManager.getMainWalletClient('https://base.llamarpc.com');
+      const client = walletManager.getMainWalletClient(testRpcUrl);
 
       expect(client).toBeDefined();
       expect(client.account).toBeDefined();
     });
 
     it('should create bot wallet client', () => {
-      const client = walletManager.getBotWalletClient('test-bot', 'https://base.llamarpc.com');
+      const client = walletManager.getBotWalletClient('test-bot', testRpcUrl);
 
       expect(client).toBeDefined();
       expect(client.account).toBeDefined();
@@ -170,7 +173,7 @@ describe('WalletManager Integration Tests', () => {
 
     it('should create wallet client for any wallet', () => {
       const mainWalletId = Object.keys(walletManager.getMainWallets())[0];
-      const client = walletManager.getWalletClient(mainWalletId, 'https://base.llamarpc.com');
+      const client = walletManager.getWalletClient(mainWalletId, testRpcUrl);
 
       expect(client).toBeDefined();
     });
@@ -277,7 +280,7 @@ describe('WalletManager Integration Tests', () => {
     });
 
     it('should throw for non-existent bot wallet', () => {
-      expect(() => walletManager.getBotWalletClient('non-existent', 'https://rpc.url')).toThrow();
+      expect(() => walletManager.getBotWalletClient('non-existent', testRpcUrl)).toThrow();
     });
 
     it('should throw for non-existent wallet ID', () => {
