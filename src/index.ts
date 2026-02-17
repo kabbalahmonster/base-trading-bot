@@ -48,6 +48,7 @@ async function main() {
           { name: '⏹️  Stop bot(s)', value: 'stop' },
           { name: '📊 View status', value: 'status' },
           { name: '💰 Fund wallet', value: 'fund' },
+          { name: '📤 Send to external wallet', value: 'send_external' },
           { name: '🏧 Reclaim funds', value: 'reclaim' },
           { name: '🗑️  Delete bot', value: 'delete' },
           { name: '❌ Exit', value: 'exit' },
@@ -73,6 +74,9 @@ async function main() {
           break;
         case 'fund':
           await fundWallet(walletManager, storage);
+          break;
+        case 'send_external':
+          await sendToExternalWallet(walletManager);
           break;
         case 'reclaim':
           await reclaimFunds(walletManager, storage);
@@ -401,6 +405,79 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
 
   } catch (error: any) {
     console.log(chalk.red(`\n✗ Funding failed: ${error.message}\n`));
+  }
+}
+
+async function sendToExternalWallet(walletManager: WalletManager) {
+  console.log(chalk.cyan('\n📤 Send to External Wallet\n'));
+
+  // Show main wallet address
+  const mainAccount = walletManager.getMainAccount();
+  console.log(chalk.dim(`From: ${mainAccount.address}`));
+
+  const { recipient, amount } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'recipient',
+      message: 'Recipient address (0x...):',
+      validate: (input) => input.startsWith('0x') && input.length === 42 || 'Invalid address',
+    },
+    {
+      type: 'input',
+      name: 'amount',
+      message: 'Amount of ETH to send:',
+      default: '0.01',
+      validate: (input) => !isNaN(parseFloat(input)) && parseFloat(input) > 0 || 'Invalid amount',
+    },
+  ]);
+
+  console.log(chalk.yellow(`\n⚠️  About to send ${amount} ETH to ${recipient}`));
+  console.log(chalk.red('⚠️  DOUBLE-CHECK THE ADDRESS - TRANSACTIONS CANNOT BE REVERSED'));
+  
+  const { confirm } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'confirm',
+      message: 'Confirm transaction?',
+      default: false,
+    },
+  ]);
+
+  if (!confirm) {
+    console.log(chalk.yellow('Cancelled.\n'));
+    return;
+  }
+
+  try {
+    const { createWalletClient, http, parseEther } = await import('viem');
+    const { base } = await import('viem/chains');
+
+    const walletClient = createWalletClient({
+      account: mainAccount,
+      chain: base,
+      transport: http(RPC_URL),
+    });
+
+    console.log(chalk.dim('Sending transaction...'));
+
+    const txHash = await walletClient.sendTransaction({
+      to: recipient as `0x${string}`,
+      value: parseEther(amount),
+    });
+
+    console.log(chalk.green(`\n✓ Transaction sent: ${txHash}`));
+    console.log(chalk.dim('Waiting for confirmation...'));
+
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(RPC_URL),
+    });
+
+    await publicClient.waitForTransactionReceipt({ hash: txHash });
+    console.log(chalk.green(`✓ Sent ${amount} ETH to ${recipient.slice(0, 10)}... successfully!\n`));
+
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Transaction failed: ${error.message}\n`));
   }
 }
 
