@@ -12,8 +12,14 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "test:integration": "vitest run tests/integration/",
+    "test:security": "vitest run tests/security/",
+    "test:unit": "vitest run tests/TradingBot.test.ts tests/WalletManager.test.ts tests/GridCalculator.test.ts",
+    "benchmark": "vitest bench --run",
+    "clean": "rm -rf dist coverage",
+    "lint": "tsc --noEmit",
+    "lint:fix": "echo 'No auto-fix available for tsc'",
+    "coverage:report": "vitest run --coverage && cat coverage/lcov.info"
   },
   "keywords": [
     "trading-bot",
@@ -39,6 +45,7 @@
     "@types/crypto-js": "^4.2.0",
     "@types/inquirer": "^9.0.0",
     "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "ts-node": "^10.9.0",
     "typescript": "^5.3.0",
     "vitest": "^1.0.0"

@@ -7,8 +7,11 @@ import { WalletManager } from '../wallet/WalletManager.js';
 import { ZeroXApi } from '../api/ZeroXApi.js';
 import { GridCalculator } from '../grid/GridCalculator.js';
 import { JsonStorage } from '../storage/JsonStorage.js';
+import { PriceOracle, PriceData, ValidationResult } from '../oracle/index.js';
+import { PnLTracker } from '../analytics/PnLTracker.js';
+import { NotificationService } from '../notifications/NotificationService.js';
 
-// Price discovery via 0x API
+// Price discovery via 0x API and Price Oracle (Chainlink + Uniswap V3 TWAP)
 
 export class TradingBot {
   private instance: BotInstance;
@@ -16,6 +19,7 @@ export class TradingBot {
   private zeroXApi: ZeroXApi;
   private storage: JsonStorage;
   private rpcUrl: string;
+  private pnLTracker: PnLTracker | null = null;
   
   private walletClient: WalletClient | null = null;
   private publicClient: any = null;
@@ -23,19 +27,44 @@ export class TradingBot {
   private dryRun: boolean = false;
   private consecutiveErrors: number = 0;
   private maxConsecutiveErrors: number = 5;
+  
+  // Price Oracle for reliable price validation
+  private priceOracle: PriceOracle | null = null;
+  private lastOraclePrice: PriceData | null = null;
+  private lastPriceValidation: ValidationResult | null = null;
+  private oracleValidationEnabled: boolean = true;
+  private minPriceConfidence: number = 0.8; // 80% minimum confidence
 
   constructor(
     instance: BotInstance,
     walletManager: WalletManager,
     zeroXApi: ZeroXApi,
     storage: JsonStorage,
-    rpcUrl: string
+    rpcUrl: string,
+    enablePriceOracle: boolean = true,
+    pnLTracker?: PnLTracker
   ) {
     this.instance = instance;
     this.walletManager = walletManager;
     this.zeroXApi = zeroXApi;
     this.storage = storage;
     this.rpcUrl = rpcUrl;
+    this.oracleValidationEnabled = enablePriceOracle;
+    this.pnLTracker = pnLTracker || null;
+  }
+
+  /**
+   * Set the PnL tracker (can be called after construction)
+   */
+  setPnLTracker(pnLTracker: PnLTracker): void {
+    this.pnLTracker = pnLTracker;
+  }
+
+  /**
+   * Get the PnL tracker
+   */
+  getPnLTracker(): PnLTracker | null {
+    return this.pnLTracker;
   }
 
   /**
@@ -47,6 +76,25 @@ export class TradingBot {
       chain: base,
       transport: http(this.rpcUrl),
     });
+
+    // Initialize Price Oracle if enabled
+    if (this.oracleValidationEnabled) {
+      this.priceOracle = new PriceOracle({
+        rpcUrl: this.rpcUrl,
+        minConfidence: this.minPriceConfidence,
+        allowFallback: true,
+        preferChainlink: true,
+        twapSeconds: 1800, // 30 minutes default TWAP
+      });
+      
+      // Run health check
+      const health = await this.priceOracle.healthCheck();
+      if (health.healthy) {
+        console.log(`✓ Price Oracle initialized (ETH: $${health.ethPrice?.toFixed(2) ?? 'N/A'})`);
+      } else {
+        console.warn(`⚠ Price Oracle health check failed - continuing with 0x prices only`);
+      }
+    }
 
     // Get wallet client - extends publicActions for waitForTransactionReceipt
     if (this.instance.useMainWallet) {
@@ -118,6 +166,20 @@ export class TradingBot {
 
     if (!position) return;
 
+    // Validate price using oracle before buying
+    if (this.oracleValidationEnabled && this.priceOracle) {
+      const validation = await this.validatePriceForTrading();
+      this.lastPriceValidation = validation;
+      
+      if (!validation.valid) {
+        console.log(`\n⏸ Buy opportunity found but price confidence too low: ${validation.reason}`);
+        console.log(`   Confidence: ${(validation.confidence * 100).toFixed(1)}% (minimum: ${(this.minPriceConfidence * 100).toFixed(0)}%)`);
+        return;
+      }
+      
+      console.log(`\n✓ Price validated - Confidence: ${(validation.confidence * 100).toFixed(1)}%`);
+    }
+
     console.log(`\n🎯 Buy opportunity found: Position ${position.id} at ${GridCalculator.formatPrice(position.buyPrice)} ETH`);
 
     // Calculate buy amount
@@ -157,6 +219,15 @@ export class TradingBot {
       console.log(`   Bought: ${formatEther(BigInt(position.tokensReceived || '0'))} tokens`);
       console.log(`   Cost: ${formatEther(BigInt(position.ethCost || '0'))} ETH`);
       this.instance.totalBuys++;
+      
+      // Send notification
+      const notificationService = NotificationService.getInstance();
+      await notificationService.notifyTradeExecuted(
+        this.instance,
+        formatEther(BigInt(position.tokensReceived || '0')),
+        formatEther(BigInt(position.ethCost || '0')),
+        position.id
+      );
     } else {
       console.error(`❌ Buy failed: ${result.error}`);
     }
@@ -211,6 +282,16 @@ export class TradingBot {
         console.log(`   Profit: ${position.profitPercent?.toFixed(2)}% (${formatEther(BigInt(position.profitEth || '0'))} ETH)`);
         this.instance.totalSells++;
         this.instance.totalProfitEth = (BigInt(this.instance.totalProfitEth) + BigInt(position.profitEth || '0')).toString();
+        
+        // Send notification
+        const notificationService = NotificationService.getInstance();
+        await notificationService.notifyProfit(
+          this.instance,
+          position.profitPercent || 0,
+          position.profitEth || '0',
+          position.ethReceived,
+          position.id
+        );
       } else {
         console.error(`❌ Sell failed: ${result.error}`);
       }
@@ -220,17 +301,59 @@ export class TradingBot {
   }
 
   /**
-   * Get current token price from 0x API
+   * Validate current price using oracle before trading
+   */
+  private async validatePriceForTrading(): Promise<ValidationResult> {
+    if (!this.priceOracle) {
+      return { valid: true, confidence: 1.0 };
+    }
+
+    try {
+      const validation = await this.priceOracle.validatePrice(
+        this.instance.tokenAddress,
+        this.minPriceConfidence
+      );
+      
+      // Also fetch and store the price data for logging
+      this.lastOraclePrice = await this.priceOracle.getPrice(this.instance.tokenAddress);
+      
+      return validation;
+    } catch (error: any) {
+      console.error('Price validation error:', error.message);
+      return { valid: false, reason: error.message, confidence: 0 };
+    }
+  }
+
+  /**
+   * Get current token price from 0x API with oracle validation
    */
   private async getCurrentPrice(): Promise<number> {
     try {
-      // Try to get price from 0x API first
+      // Try to get price from oracle first if available
+      if (this.priceOracle) {
+        const oraclePrice = await this.priceOracle.getPrice(this.instance.tokenAddress);
+        if (oraclePrice && oraclePrice.confidence >= this.minPriceConfidence) {
+          this.lastOraclePrice = oraclePrice;
+          this.instance.currentPrice = oraclePrice.price;
+          return oraclePrice.price;
+        }
+      }
+
+      // Fallback to 0x API
       const price = await this.zeroXApi.getTokenPrice(
         this.instance.tokenAddress,
         this.instance.walletAddress
       );
       
       if (price && price > 0) {
+        // Validate 0x price against oracle if available
+        if (this.priceOracle && this.lastOraclePrice) {
+          const priceDiff = Math.abs(price - this.lastOraclePrice.price) / this.lastOraclePrice.price;
+          if (priceDiff > 0.05) { // >5% difference
+            console.warn(`⚠ 0x price (${price}) differs from oracle (${this.lastOraclePrice.price}) by ${(priceDiff * 100).toFixed(2)}%`);
+          }
+        }
+        
         // Update stored price
         this.instance.currentPrice = price;
         return price;
@@ -241,12 +364,17 @@ export class TradingBot {
         return this.instance.currentPrice;
       }
       
-      // Last resort: ask user for initial price
-      console.log('⚠ Could not fetch price from 0x - using default');
+      // Last resort: use oracle price even if low confidence
+      if (this.lastOraclePrice) {
+        return this.lastOraclePrice.price;
+      }
+      
+      // Final fallback
+      console.log('⚠ Could not fetch price from 0x or oracle - using default');
       return 0.000001; // Default fallback
     } catch (error: any) {
       console.error('Price fetch error:', error.message);
-      return this.instance.currentPrice || 0.000001;
+      return this.instance.currentPrice || this.lastOraclePrice?.price || 0.000001;
     }
   }
 
@@ -344,6 +472,15 @@ export class TradingBot {
       // Stop bot if too many consecutive errors
       if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
         console.error(`❌ Too many errors (${this.consecutiveErrors}). Stopping bot.`);
+        
+        // Send notification before stopping
+        const notificationService = NotificationService.getInstance();
+        await notificationService.notifyBotStopped(
+          this.instance,
+          this.consecutiveErrors,
+          `Buy error: ${error.message}`
+        );
+        
         this.stop();
       }
       
@@ -417,8 +554,8 @@ export class TradingBot {
         
         // Calculate profit
         const ethReceived = BigInt(quote.buyAmount);
-        const gasCost = receipt.gasUsed * BigInt(quote.gasPrice);
-        const netEth = ethReceived - gasCost;
+        const gasCostWei = receipt.gasUsed * BigInt(quote.gasPrice);
+        const netEth = ethReceived - gasCostWei;
         const ethCost = BigInt(position.ethCost || '0');
         const profit = netEth > ethCost ? netEth - ethCost : BigInt(0);
         const profitPercent = ethCost > 0 ? Number((profit * BigInt(10000)) / ethCost) / 100 : 0;
@@ -431,11 +568,39 @@ export class TradingBot {
         position.profitEth = profit.toString();
         position.profitPercent = profitPercent;
 
+        // Record trade in PnL tracker
+        if (this.pnLTracker) {
+          try {
+            const gasCost = gasCostWei.toString();
+            const price = Number(formatEther(ethReceived)) / Number(formatEther(BigInt(tokenAmount)));
+            
+            await this.pnLTracker.recordSell({
+              botId: this.instance.id,
+              botName: this.instance.name,
+              tokenAddress: this.instance.tokenAddress,
+              tokenSymbol: this.instance.tokenSymbol,
+              amount: tokenAmount,
+              amountEth: ethReceived.toString(),
+              price: price,
+              gasCost: gasCost,
+              gasUsed: receipt.gasUsed.toString(),
+              gasPrice: quote.gasPrice,
+              profit: profit.toString(),
+              profitPercent: profitPercent,
+              positionId: position.id,
+              txHash: txHash,
+              blockNumber: Number(receipt.blockNumber),
+            });
+          } catch (error: any) {
+            console.warn(`   ⚠ Failed to record sell in PnL tracker: ${error.message}`);
+          }
+        }
+
         return {
           success: true,
           txHash,
           gasUsed: receipt.gasUsed,
-          gasCostEth: gasCost.toString(),
+          gasCostEth: gasCostWei.toString(),
         };
       } else {
         this.consecutiveErrors++;
@@ -448,6 +613,15 @@ export class TradingBot {
       // Stop bot if too many consecutive errors
       if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
         console.error(`❌ Too many errors (${this.consecutiveErrors}). Stopping bot.`);
+        
+        // Send notification before stopping
+        const notificationService = NotificationService.getInstance();
+        await notificationService.notifyBotStopped(
+          this.instance,
+          this.consecutiveErrors,
+          `Sell error: ${error.message}`
+        );
+        
         this.stop();
       }
       

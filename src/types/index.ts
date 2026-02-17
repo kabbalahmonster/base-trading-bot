@@ -97,7 +97,9 @@ export interface BotInstance {
   enabled: boolean;          // Default: true (can be disabled without deleting)
   lastHeartbeat: number;
   currentPrice: number;
-  
+  consecutiveErrors?: number; // Track consecutive errors for auto-stop
+  lastTradeAt?: number;      // Timestamp of last trade
+
   // Timing
   createdAt: number;
   lastUpdated: number;

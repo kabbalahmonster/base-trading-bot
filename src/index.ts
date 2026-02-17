@@ -9,11 +9,8 @@ import { JsonStorage } from './storage/JsonStorage.js';
 import { HeartbeatManager } from './bot/HeartbeatManager.js';
 import { GridCalculator } from './grid/GridCalculator.js';
 import { BotInstance, GridConfig, Position } from './types/index.js';
-import { formatEther, createPublicClient, formatUnits } from 'viem';
+import { formatEther, createPublicClient } from 'viem';
 import { randomUUID } from 'crypto';
-import { PnLTracker } from './analytics/PnLTracker.js';
-import { TradeHistory } from './analytics/TradeHistory.js';
-import { CsvExporter } from './analytics/CsvExporter.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -32,7 +29,6 @@ const RPC_FALLBACKS = [
 
 // Track working RPC
 let currentRpcUrl = RPC_URL;
-let lastSuccessfulRpcIndex = 0;
 
 /**
  * Get a working RPC URL with fallback support
@@ -57,7 +53,6 @@ async function getWorkingRpc(): Promise<string> {
       
       // Success! Update current RPC
       currentRpcUrl = rpc;
-      lastSuccessfulRpcIndex = i;
       
       if (i > 0) {
         console.log(chalk.green(`✓ Switched to working RPC: ${rpc}`));
@@ -106,7 +101,6 @@ async function main() {
           { name: '⏹️  Stop bot(s)', value: 'stop' },
           { name: '⏸️  Enable/Disable bot', value: 'toggle' },
           { name: '📊 View status', value: 'status' },
-          { name: '📈 View P&L Report', value: 'pnl' },
           { name: '📺 Monitor bots (live)', value: 'monitor' },
           { name: '💰 Fund wallet', value: 'fund' },
           { name: '👛 View wallet balances', value: 'view_balances' },
@@ -141,9 +135,6 @@ async function main() {
           break;
         case 'status':
           await showStatus(heartbeatManager, storage);
-          break;
-        case 'pnl':
-          await showPnLReport();
           break;
         case 'monitor':
           await monitorBots(storage, heartbeatManager);
@@ -212,7 +203,9 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
       },
     ]);
     await walletManager.initialize(password);
-    walletManager.importData({ mainWallet, walletDictionary: await storage.getWalletDictionary() });
+    const walletDictionary = await storage.getWalletDictionary();
+    const primaryWalletId = await storage.getPrimaryWalletId();
+    walletManager.importData({ walletDictionary, primaryWalletId });
   }
 
   // Bot configuration
@@ -629,14 +622,6 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
 
   // Get working RPC
   const workingRpc = await getWorkingRpc();
-  const { createPublicClient, http, formatEther, formatUnits } = await import('viem');
-  const { base } = await import('viem/chains');
-  const { erc20Abi } = await import('viem');
-
-  const publicClient = createPublicClient({
-    chain: base,
-    transport: http(workingRpc),
-  });
 
   let refreshCount = 0;
   const maxRefreshes = 60; // Run for 60 seconds
@@ -743,7 +728,7 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
   await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 2) * 1000));
 }
 
-async function monitorSingleBot(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
+async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: HeartbeatManager) {
   // Select bot to monitor
   const { botId } = await inquirer.prompt([
     {
@@ -1051,7 +1036,7 @@ async function viewWalletBalances(storage: JsonStorage, walletManager: WalletMan
       const fallbackRpc = await getWorkingRpc();
       if (fallbackRpc !== workingRpc) {
         console.log(chalk.green(`✓ Using fallback RPC: ${fallbackRpc}\n`));
-        return viewWalletBalances(storage); // Retry with new RPC
+        return viewWalletBalances(storage, walletManager); // Retry with new RPC
       }
       return;
     }
@@ -1115,11 +1100,9 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
 
   try {
     await walletManager.initialize(password);
-    walletManager.importData({ 
-      mainWallet, 
-      walletDictionary: await storage.getWalletDictionary(),
-      primaryWalletId: await storage.getPrimaryWalletId()
-    });
+    const walletDictionary = await storage.getWalletDictionary();
+    const primaryWalletId = await storage.getPrimaryWalletId();
+    walletManager.importData({ walletDictionary, primaryWalletId });
   } catch (error: any) {
     console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
     return;
@@ -1277,16 +1260,19 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
 
   try {
     await walletManager.initialize(password);
-    walletManager.importData({ mainWallet, walletDictionary: await storage.getWalletDictionary() });
+    const walletDictionary = await storage.getWalletDictionary();
+    const primaryWalletId = await storage.getPrimaryWalletId();
+    walletManager.importData({ walletDictionary, primaryWalletId });
   } catch (error: any) {
     console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
     return;
   }
 
   // Get all wallets (main + bots)
+  const walletDictionary = await storage.getWalletDictionary();
   const allWallets = [
-    { name: 'Main Wallet', address: mainWallet.address },
-    ...Object.entries(await storage.getWalletDictionary()).map(([id, wallet]) => ({
+    { name: 'Main Wallet', address: mainWallet!.address },
+    ...Object.entries(walletDictionary).map(([id, wallet]) => ({
       name: `Bot Wallet (${id.slice(0, 8)}...)`,
       address: wallet.address,
     })),
@@ -1385,9 +1371,10 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
   }
 
   try {
-    const { createWalletClient, http, parseEther } = await import('viem');
+    const { createWalletClient, http, parseEther, createPublicClient } = await import('viem');
     const { base } = await import('viem/chains');
 
+    const workingRpc = await getWorkingRpc();
     const account = walletManager.getAccountForAddress(fromWallet);
     
     // Debug: verify account address matches
@@ -1597,16 +1584,20 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
 
   try {
     await walletManager.initialize(password);
-    walletManager.importData({ mainWallet, walletDictionary: await storage.getWalletDictionary() });
+    const walletDictionary = await storage.getWalletDictionary();
+    const primaryWalletId = await storage.getPrimaryWalletId();
+    walletManager.importData({ walletDictionary, primaryWalletId });
   } catch (error: any) {
     console.log(chalk.red(`\n✗ Invalid password: ${error.message}\n`));
     return;
   }
 
   // Get all wallets (main + bots)
+  const walletDictionary = await storage.getWalletDictionary();
+  const mainWalletData = Object.values(walletDictionary).find(w => w.type === 'main');
   const allWallets = [
-    { name: 'Main Wallet', address: mainWallet.address, id: 'main' },
-    ...Object.entries(await storage.getWalletDictionary()).map(([id, wallet]) => ({
+    { name: 'Main Wallet', address: mainWalletData?.address || '', id: 'main' },
+    ...Object.entries(walletDictionary).map(([id, wallet]) => ({
       name: `Bot Wallet (${id.slice(0, 8)}...)`,
       address: wallet.address,
       id,
@@ -2216,9 +2207,13 @@ async function reconfigureBot(storage: JsonStorage) {
         }
         
         // Create a combined position at the best price level
+        const buyMax = sortedHolding[0].buyMax || sortedHolding[0].buyPrice;
+        const buyMin = sortedHolding[0].buyMin || buyMax;
         const combinedPosition: Position = {
           id: 0,
-          buyPrice: sortedHolding[0].buyPrice,
+          buyMin,
+          buyMax,
+          buyPrice: buyMax,
           sellPrice: highestSellPrice,
           stopLossPrice: sortedHolding[0].stopLossPrice,
           status: 'HOLDING',
@@ -2506,414 +2501,5 @@ async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorag
   }
 }
 
-// ==================== P&L Reporting Functions ====================
-
-async function showPnLReport() {
-  console.log(chalk.cyan.bold('\n📈 P&L Report\n'));
-
-  // Initialize PnL tracker
-  const tradeHistory = new TradeHistory('./trade-history.json');
-  await tradeHistory.init();
-  const pnLTracker = new PnLTracker(tradeHistory);
-  await pnLTracker.init();
-
-  // Check if there's any trade data
-  const stats = await tradeHistory.getStats();
-  if (stats.totalTrades === 0) {
-    console.log(chalk.yellow('No trade history found. Start trading to see P&L reports.\n'));
-    return;
-  }
-
-  const { reportType } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'reportType',
-      message: 'Select report type:',
-      choices: [
-        { name: '📊 Summary (All bots)', value: 'summary' },
-        { name: '📅 Daily P&L', value: 'daily' },
-        { name: '📆 Weekly P&L', value: 'weekly' },
-        { name: '📅 Monthly P&L', value: 'monthly' },
-        { name: '🤖 Bot-specific P&L', value: 'bot' },
-        { name: '📤 Export to CSV', value: 'export' },
-        { name: '⬅️  Back', value: 'back' },
-      ],
-    },
-  ]);
-
-  if (reportType === 'back') {
-    console.log(chalk.dim('\nCancelled.\n'));
-    return;
-  }
-
-  try {
-    switch (reportType) {
-      case 'summary':
-        await showPnLSummary(pnLTracker);
-        break;
-      case 'daily':
-        await showDailyPnL(pnLTracker);
-        break;
-      case 'weekly':
-        await showWeeklyPnL(pnLTracker);
-        break;
-      case 'monthly':
-        await showMonthlyPnL(pnLTracker);
-        break;
-      case 'bot':
-        await showBotPnL(pnLTracker);
-        break;
-      case 'export':
-        await exportToCsv(pnLTracker);
-        break;
-    }
-  } catch (error: any) {
-    console.log(chalk.red(`\n✗ Error: ${error.message}\n`));
-  }
-}
-
-async function showPnLSummary(pnLTracker: PnLTracker) {
-  console.log(chalk.cyan('\n📊 P&L Summary\n'));
-  console.log(chalk.yellow('─'.repeat(60)));
-
-  const cumulative = await pnLTracker.getCumulativePnL();
-
-  console.log(chalk.cyan('Overall Performance:'));
-  console.log(`  Total Trades: ${chalk.white(cumulative.totalTrades.toString())}`);
-  console.log(`  Total Buys: ${chalk.green(cumulative.totalBuys.toString())}`);
-  console.log(`  Total Sells: ${chalk.blue(cumulative.totalSells.toString())}`);
-  console.log();
-  
-  console.log(chalk.cyan('Volume:'));
-  console.log(`  Buy Volume: ${chalk.yellow(cumulative.totalBuyVolumeEth.toFixed(6))} ETH`);
-  console.log(`  Sell Volume: ${chalk.yellow(cumulative.totalSellVolumeEth.toFixed(6))} ETH`);
-  console.log();
-  
-  console.log(chalk.cyan('Profit/Loss:'));
-  const profitColor = cumulative.totalRealizedProfitEth >= 0 ? chalk.green : chalk.red;
-  console.log(`  Realized Profit: ${profitColor(cumulative.totalRealizedProfitEth.toFixed(6))} ETH`);
-  console.log(`  Gas Costs: ${chalk.red(cumulative.totalGasCostEth.toFixed(6))} ETH`);
-  console.log(`  Net Profit: ${profitColor(cumulative.totalNetProfitEth.toFixed(6))} ETH`);
-  console.log();
-  
-  console.log(chalk.cyan('Statistics:'));
-  console.log(`  Win Rate: ${chalk.yellow(cumulative.winRate.toFixed(1))}%`);
-  console.log(`  Avg Profit/Trade: ${chalk.yellow(cumulative.avgProfitPerTrade.toFixed(6))} ETH`);
-  
-  if (cumulative.firstTradeDate) {
-    const firstDate = new Date(cumulative.firstTradeDate);
-    const lastDate = new Date(cumulative.lastTradeDate!);
-    console.log(`  First Trade: ${chalk.dim(firstDate.toLocaleDateString())}`);
-    console.log(`  Last Trade: ${chalk.dim(lastDate.toLocaleDateString())}`);
-  }
-  
-  console.log(chalk.yellow('─'.repeat(60)));
-  console.log();
-
-  // Show per-bot summary
-  const botSummaries = await pnLTracker.getAllBotPnLSummaries();
-  if (botSummaries.length > 0) {
-    console.log(chalk.cyan('By Bot:'));
-    for (const bot of botSummaries) {
-      const botProfitColor = bot.netProfitEth >= 0 ? chalk.green : chalk.red;
-      console.log(`  ${chalk.bold(bot.botName)} (${bot.tokenSymbol}):`);
-      console.log(`    Trades: ${bot.buys} buys, ${bot.sells} sells`);
-      console.log(`    Net P&L: ${botProfitColor(bot.netProfitEth.toFixed(6))} ETH`);
-      console.log(`    Avg Profit: ${chalk.yellow(bot.avgProfitPercent.toFixed(2))}%`);
-    }
-    console.log();
-  }
-}
-
-async function showDailyPnL(pnLTracker: PnLTracker) {
-  console.log(chalk.cyan('\n📅 Daily P&L (Last 14 days)\n'));
-  console.log(chalk.yellow('─'.repeat(80)));
-  
-  const dailyPnL = await pnLTracker.getDailyPnLHistory(14);
-  
-  console.log(chalk.bold(
-    'Date'.padEnd(12) + 
-    'Trades'.padEnd(8) + 
-    'Buys'.padEnd(8) + 
-    'Sells'.padEnd(8) + 
-    'Profit ETH'.padEnd(14) + 
-    'Gas ETH'.padEnd(12) + 
-    'Net ETH'
-  ));
-  console.log(chalk.yellow('─'.repeat(80)));
-  
-  for (const day of dailyPnL) {
-    if (day.totalTrades === 0) continue;
-    
-    const date = new Date(day.startDate).toLocaleDateString();
-    const profitColor = day.netProfitEth >= 0 ? chalk.green : chalk.red;
-    
-    console.log(
-      chalk.dim(date.padEnd(12)) +
-      day.totalTrades.toString().padEnd(8) +
-      day.buyCount.toString().padEnd(8) +
-      day.sellCount.toString().padEnd(8) +
-      profitColor(day.realizedProfitEth.toFixed(6).padEnd(14)) +
-      chalk.red(day.totalGasCostEth.toFixed(6).padEnd(12)) +
-      profitColor(day.netProfitEth.toFixed(6))
-    );
-  }
-  
-  console.log(chalk.yellow('─'.repeat(80)));
-  console.log();
-}
-
-async function showWeeklyPnL(pnLTracker: PnLTracker) {
-  console.log(chalk.cyan('\n📆 Weekly P&L (Last 8 weeks)\n'));
-  console.log(chalk.yellow('─'.repeat(80)));
-  
-  const weeklyPnL = await pnLTracker.getWeeklyPnLHistory(8);
-  
-  console.log(chalk.bold(
-    'Week'.padEnd(16) + 
-    'Trades'.padEnd(8) + 
-    'Buys'.padEnd(8) + 
-    'Sells'.padEnd(8) + 
-    'Profit ETH'.padEnd(14) + 
-    'Gas ETH'.padEnd(12) + 
-    'Net ETH'
-  ));
-  console.log(chalk.yellow('─'.repeat(80)));
-  
-  for (const week of weeklyPnL) {
-    if (week.totalTrades === 0) continue;
-    
-    const profitColor = week.netProfitEth >= 0 ? chalk.green : chalk.red;
-    
-    console.log(
-      chalk.dim(week.period.padEnd(16)) +
-      week.totalTrades.toString().padEnd(8) +
-      week.buyCount.toString().padEnd(8) +
-      week.sellCount.toString().padEnd(8) +
-      profitColor(week.realizedProfitEth.toFixed(6).padEnd(14)) +
-      chalk.red(week.totalGasCostEth.toFixed(6).padEnd(12)) +
-      profitColor(week.netProfitEth.toFixed(6))
-    );
-  }
-  
-  console.log(chalk.yellow('─'.repeat(80)));
-  console.log();
-}
-
-async function showMonthlyPnL(pnLTracker: PnLTracker) {
-  console.log(chalk.cyan('\n📅 Monthly P&L (Last 6 months)\n'));
-  console.log(chalk.yellow('─'.repeat(80)));
-  
-  const monthlyPnL = await pnLTracker.getMonthlyPnLHistory(6);
-  
-  console.log(chalk.bold(
-    'Month'.padEnd(14) + 
-    'Trades'.padEnd(8) + 
-    'Buys'.padEnd(8) + 
-    'Sells'.padEnd(8) + 
-    'Profit ETH'.padEnd(14) + 
-    'Gas ETH'.padEnd(12) + 
-    'Net ETH'
-  ));
-  console.log(chalk.yellow('─'.repeat(80)));
-  
-  for (const month of monthlyPnL) {
-    if (month.totalTrades === 0) continue;
-    
-    const profitColor = month.netProfitEth >= 0 ? chalk.green : chalk.red;
-    
-    console.log(
-      chalk.dim(month.period.padEnd(14)) +
-      month.totalTrades.toString().padEnd(8) +
-      month.buyCount.toString().padEnd(8) +
-      month.sellCount.toString().padEnd(8) +
-      profitColor(month.realizedProfitEth.toFixed(6).padEnd(14)) +
-      chalk.red(month.totalGasCostEth.toFixed(6).padEnd(12)) +
-      profitColor(month.netProfitEth.toFixed(6))
-    );
-  }
-  
-  console.log(chalk.yellow('─'.repeat(80)));
-  console.log();
-}
-
-async function showBotPnL(pnLTracker: PnLTracker) {
-  const tradeHistory = pnLTracker.getTradeHistory();
-  const botIds = await tradeHistory.getBotIds();
-  
-  if (botIds.length === 0) {
-    console.log(chalk.yellow('\nNo bot trade history found.\n'));
-    return;
-  }
-  
-  const { botId } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'botId',
-      message: 'Select bot:',
-      choices: [
-        ...botIds.map(id => ({ name: `Bot ${id.slice(0, 8)}...`, value: id })),
-        { name: '⬅️  Back', value: 'back' },
-      ],
-    },
-  ]);
-  
-  if (botId === 'back') return;
-  
-  const botPnL = await pnLTracker.getBotPnL(botId);
-  const botTrades = await tradeHistory.getTradesByBot(botId);
-  
-  console.log(chalk.cyan(`\n🤖 Bot: ${botPnL.botName}\n`));
-  console.log(chalk.yellow('─'.repeat(60)));
-  
-  console.log(`Token: ${chalk.yellow(botPnL.tokenSymbol)}`);
-  console.log(`Total Trades: ${chalk.white(botPnL.totalTrades.toString())}`);
-  console.log(`Buys: ${chalk.green(botPnL.buys.toString())}`);
-  console.log(`Sells: ${chalk.blue(botPnL.sells.toString())}`);
-  console.log();
-  
-  const profitColor = botPnL.netProfitEth >= 0 ? chalk.green : chalk.red;
-  console.log(`Realized Profit: ${profitColor(botPnL.realizedProfitEth.toFixed(6))} ETH`);
-  console.log(`Gas Costs: ${chalk.red(botPnL.gasCostEth.toFixed(6))} ETH`);
-  console.log(`Net P&L: ${profitColor(botPnL.netProfitEth.toFixed(6))} ETH`);
-  console.log(`Avg Profit: ${chalk.yellow(botPnL.avgProfitPercent.toFixed(2))}%`);
-  
-  if (botPnL.bestTradeProfit !== undefined) {
-    console.log(`Best Trade: ${chalk.green('+' + botPnL.bestTradeProfit.toFixed(6))} ETH`);
-  }
-  if (botPnL.worstTradeProfit !== undefined) {
-    console.log(`Worst Trade: ${chalk.red(botPnL.worstTradeProfit.toFixed(6))} ETH`);
-  }
-  
-  console.log(chalk.yellow('─'.repeat(60)));
-  
-  // Show recent trades
-  console.log(chalk.cyan('\nRecent Trades:'));
-  const recentTrades = botTrades.slice(0, 5);
-  for (const trade of recentTrades) {
-    const date = new Date(trade.timestamp).toLocaleDateString();
-    const actionColor = trade.action === 'buy' ? chalk.green : chalk.blue;
-    const profitStr = trade.action === 'sell' && trade.profit 
-      ? ` (${Number(formatEther(BigInt(trade.profit))).toFixed(6)} ETH)` 
-      : '';
-    console.log(`  ${chalk.dim(date)} ${actionColor(trade.action.toUpperCase())}${profitStr}`);
-  }
-  console.log();
-}
-
-async function exportToCsv(pnLTracker: PnLTracker) {
-  const { exportType } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'exportType',
-      message: 'Select export type:',
-      choices: [
-        { name: '📁 Export all trades', value: 'all' },
-        { name: '🤖 Export by bot', value: 'bot' },
-        { name: '📅 Export by date range', value: 'date' },
-        { name: '📅 Export by year (tax report)', value: 'year' },
-        { name: '⬅️  Back', value: 'back' },
-      ],
-    },
-  ]);
-  
-  if (exportType === 'back') return;
-  
-  const tradeHistory = pnLTracker.getTradeHistory();
-  const csvExporter = new CsvExporter(tradeHistory);
-  await csvExporter.init();
-  
-  let csv: string;
-  let filename: string;
-  
-  switch (exportType) {
-    case 'all':
-      csv = await csvExporter.exportAll();
-      filename = csvExporter.generateFilename();
-      break;
-      
-    case 'bot': {
-      const botIds = await tradeHistory.getBotIds();
-      const { botId } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'botId',
-          message: 'Select bot:',
-          choices: botIds.map(id => ({ name: `Bot ${id.slice(0, 8)}...`, value: id })),
-        },
-      ]);
-      
-      const trades = await tradeHistory.getTradesByBot(botId);
-      const botName = trades[0]?.botName || 'Unknown';
-      csv = await csvExporter.exportByBot(botId);
-      filename = csvExporter.generateFilename({ botId, botName });
-      break;
-    }
-      
-    case 'date': {
-      const { startDate, endDate } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'startDate',
-          message: 'Start date (YYYY-MM-DD):',
-          validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || 'Invalid date format',
-        },
-        {
-          type: 'input',
-          name: 'endDate',
-          message: 'End date (YYYY-MM-DD):',
-          validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || 'Invalid date format',
-        },
-      ]);
-      
-      csv = await csvExporter.exportByDateRange(new Date(startDate), new Date(endDate));
-      filename = csvExporter.generateFilename({ 
-        startDate: new Date(startDate), 
-        endDate: new Date(endDate) 
-      });
-      break;
-    }
-      
-    case 'year': {
-      const currentYear = new Date().getFullYear();
-      const { year } = await inquirer.prompt([
-        {
-          type: 'number',
-          name: 'year',
-          message: 'Year:',
-          default: currentYear,
-        },
-      ]);
-      
-      csv = await csvExporter.exportByYear(year);
-      filename = csvExporter.generateFilename({ year });
-      break;
-    }
-      
-    default:
-      return;
-  }
-  
-  // Write to file
-  const { filepath } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'filepath',
-      message: 'Save to file:',
-      default: filename,
-    },
-  ]);
-  
-  try {
-    await csvExporter.exportToFile(filepath, await pnLTracker.getTradesForExport(
-      exportType === 'bot' ? { botId: (await inquirer.prompt([{ type: 'list', name: 'bid', message: 'Select bot:', choices: (await tradeHistory.getBotIds()).map(id => ({ name: `Bot ${id.slice(0, 8)}...`, value: id })) }])).bid } : 
-      exportType === 'date' ? { startDate: new Date((await inquirer.prompt([{ type: 'input', name: 'sd', message: 'Start (YYYY-MM-DD):', validate: (i) => /^\d{4}-\d{2}-\d{2}$/.test(i) }])).sd).getTime(), endDate: new Date((await inquirer.prompt([{ type: 'input', name: 'ed', message: 'End (YYYY-MM-DD):', validate: (i) => /^\d{4}-\d{2}-\d{2}$/.test(i) }])).ed).getTime() } : 
-      undefined
-    ));
-    console.log(chalk.green(`\n✓ Exported to ${filepath}\n`));
-  } catch (error: any) {
-    console.log(chalk.red(`\n✗ Export failed: ${error.message}\n`));
-  }
-}
-
+// Start the application
 main().catch(console.error);
