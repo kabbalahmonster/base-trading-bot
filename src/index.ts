@@ -11,6 +11,9 @@ import { GridCalculator } from './grid/GridCalculator.js';
 import { BotInstance, GridConfig, Position } from './types/index.js';
 import { formatEther, createPublicClient, formatUnits } from 'viem';
 import { randomUUID } from 'crypto';
+import { PnLTracker } from './analytics/PnLTracker.js';
+import { TradeHistory } from './analytics/TradeHistory.js';
+import { CsvExporter } from './analytics/CsvExporter.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -103,6 +106,7 @@ async function main() {
           { name: '⏹️  Stop bot(s)', value: 'stop' },
           { name: '⏸️  Enable/Disable bot', value: 'toggle' },
           { name: '📊 View status', value: 'status' },
+          { name: '📈 View P&L Report', value: 'pnl' },
           { name: '📺 Monitor bots (live)', value: 'monitor' },
           { name: '💰 Fund wallet', value: 'fund' },
           { name: '👛 View wallet balances', value: 'view_balances' },
@@ -137,6 +141,9 @@ async function main() {
           break;
         case 'status':
           await showStatus(heartbeatManager, storage);
+          break;
+        case 'pnl':
+          await showPnLReport();
           break;
         case 'monitor':
           await monitorBots(storage, heartbeatManager);
@@ -578,7 +585,6 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
 
 async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
   console.log(chalk.cyan.bold('\n📺 Bot Monitor - Live Dashboard\n'));
-  console.log(chalk.dim('Press Ctrl+C or wait 30 seconds to return to menu\n'));
 
   const bots = await storage.getAllBots();
   if (bots.length === 0) {
@@ -592,6 +598,35 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
     return;
   }
 
+  // Choose monitoring mode
+  const { mode } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'mode',
+      message: 'Select monitoring mode:',
+      choices: [
+        { name: `📊 All Bots Overview (${enabledBots.length} bots)`, value: 'all' },
+        { name: '🔍 Individual Bot Detail (deep dive)', value: 'single' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (mode === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  if (mode === 'all') {
+    await monitorAllBots(enabledBots, heartbeatManager);
+  } else {
+    await monitorSingleBot(enabledBots, heartbeatManager);
+  }
+}
+
+async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
+  console.log(chalk.dim('Press Ctrl+C or wait 60 seconds to return to menu\n'));
+
   // Get working RPC
   const workingRpc = await getWorkingRpc();
   const { createPublicClient, http, formatEther, formatUnits } = await import('viem');
@@ -604,7 +639,7 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
   });
 
   let refreshCount = 0;
-  const maxRefreshes = 30; // Run for 30 seconds (1 refresh per second)
+  const maxRefreshes = 60; // Run for 60 seconds
 
   const interval = setInterval(async () => {
     refreshCount++;
@@ -614,132 +649,324 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
       return;
     }
 
-    // Clear screen (ANSI escape code)
+    // Clear screen
     console.log('\x1Bc');
 
-    // Header
     const timestamp = new Date().toLocaleTimeString();
-    console.log(chalk.cyan.bold('╔════════════════════════════════════════════════════════════════╗'));
-    console.log(chalk.cyan.bold(`║  🤖 BASE GRID BOT MONITOR                ${timestamp}    ║`));
-    console.log(chalk.cyan.bold('╚════════════════════════════════════════════════════════════════╝'));
+    const dateStr = new Date().toLocaleDateString();
+
+    // Header
+    console.log(chalk.bgCyan.black('╔══════════════════════════════════════════════════════════════════╗'));
+    console.log(chalk.bgCyan.black(`║  🤖 BASE GRID BOT FLEET OVERVIEW          ${dateStr} ${timestamp}  ║`));
+    console.log(chalk.bgCyan.black('╚══════════════════════════════════════════════════════════════════╝'));
     console.log();
 
-    // System Overview
+    // System Stats
     const status = heartbeatManager.getStatus();
-    console.log(chalk.yellow('📊 SYSTEM OVERVIEW'));
-    console.log(chalk.yellow('─'.repeat(64)));
-    console.log(`  Heartbeat: ${status.isRunning ? chalk.green('● RUNNING') : chalk.red('○ STOPPED')}`);
-    console.log(`  Active Bots: ${chalk.green(status.totalBots.toString())} / ${enabledBots.length} enabled`);
-    console.log(`  RPC: ${chalk.dim(workingRpc.slice(0, 40))}...`);
+    const runningBots = enabledBots.filter(b => b.isRunning).length;
+    const holdingTotal = enabledBots.reduce((acc, b) => acc + b.positions.filter(p => p.status === 'HOLDING').length, 0);
+    const totalBuys = enabledBots.reduce((acc, b) => acc + (b.totalBuys || 0), 0);
+    const totalSells = enabledBots.reduce((acc, b) => acc + (b.totalSells || 0), 0);
+    const totalProfit = enabledBots.reduce((acc, b) => acc + BigInt(b.totalProfitEth || '0'), BigInt(0));
+
+    console.log(chalk.yellow('📊 FLEET SUMMARY'));
+    console.log(chalk.yellow('═'.repeat(66)));
+    console.log(`  Fleet Status:     ${chalk.green(runningBots + ' RUNNING')} / ${enabledBots.length} bots`);
+    console.log(`  Heartbeat:        ${status.isRunning ? chalk.green('● ACTIVE') : chalk.red('○ STOPPED')}`);
+    console.log(`  Total Positions:  ${chalk.cyan(holdingTotal + ' holding')} across all bots`);
+    console.log(`  Total Trades:     ${chalk.magenta(totalBuys + ' buys')} | ${chalk.magenta(totalSells + ' sells')}`);
+    console.log(`  Total Profit:     ${chalk.green(formatEther(totalProfit) + ' ETH')}`);
     console.log();
 
-    // Bot Details
-    for (let i = 0; i < enabledBots.length; i++) {
-      const bot = enabledBots[i];
-      const isActive = bot.isRunning;
+    // Bot Summary Table
+    console.log(chalk.yellow('📈 BOT STATUS BOARD'));
+    console.log(chalk.yellow('═'.repeat(66)));
+    console.log(chalk.dim('  Name          Status   Pos    ETH        Token      Buy→Sell       Profit'));
+    console.log(chalk.dim('  ─────────────────────────────────────────────────────────────────────────'));
 
-      // Bot header
-      const botStatus = isActive ? chalk.green('● LIVE') : chalk.gray('○ IDLE');
-      console.log(chalk.cyan(`📈 BOT ${i + 1}/${enabledBots.length}: ${chalk.bold(bot.name)} ${botStatus}`));
-      console.log(chalk.cyan('─'.repeat(64)));
+    for (const bot of enabledBots) {
+      const statusStr = bot.isRunning ? chalk.green('LIVE ') : chalk.gray('IDLE ');
 
-      // Basic Info
-      console.log(`  Token: ${chalk.yellow(bot.tokenSymbol)} ${chalk.dim(`(${bot.tokenAddress.slice(0, 12)}...)`)}`);
-      console.log(`  Wallet: ${chalk.dim(bot.walletAddress)}`);
+      const holding = bot.positions.filter(p => p.status === 'HOLDING').length;
+      const posStr = String(holding).padStart(2, ' ');
 
-      // Fetch balances
-      try {
-        const ethBalance = await publicClient.getBalance({
-          address: bot.walletAddress as `0x${string}`,
-        });
-        console.log(`  ETH Balance: ${chalk.green(formatEther(ethBalance) + ' ETH')}`);
-
-        // Token balance
-        let decimals = 18;
-        try {
-          decimals = await publicClient.readContract({
-            address: bot.tokenAddress as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'decimals',
-          });
-        } catch {}
-
-        const tokenBalance = await publicClient.readContract({
-          address: bot.tokenAddress as `0x${string}`,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [bot.walletAddress as `0x${string}`],
-        });
-        console.log(`  Token Balance: ${chalk.green(formatUnits(tokenBalance, decimals) + ' ' + bot.tokenSymbol)}`);
-      } catch {
-        console.log(chalk.dim('  Balance: Unable to fetch'));
-      }
-
-      // Grid Info
-      const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING');
+      // Get next buy/sell
       const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY');
-      const soldPositions = bot.positions.filter(p => p.status === 'SOLD');
+      const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING');
 
-      console.log();
-      console.log(chalk.magenta('  📊 GRID STATUS'));
-      console.log(`    Positions: ${chalk.green(holdingPositions.length + ' holding')} | ` +
-                  `${chalk.yellow(emptyPositions.length + ' empty')} | ` +
-                  `${chalk.blue(soldPositions.length + ' sold')} / ` +
-                  `${bot.positions.length} total`);
+      const nextBuy = emptyPositions
+        .filter(p => p.buyPrice <= (bot.currentPrice * 1.1))
+        .sort((a, b) => b.buyPrice - a.buyPrice)[0];
 
-      // Next Buy Point
-      const nextBuyPosition = emptyPositions
-        .filter(p => p.buyPrice <= (bot.currentPrice * 1.1)) // Within 10% of current price
-        .sort((a, b) => b.buyPrice - a.buyPrice)[0]; // Highest buy price first
+      const nextSell = holdingPositions
+        .sort((a, b) => a.sellPrice - b.sellPrice)[0];
 
-      if (nextBuyPosition) {
-        console.log(`    Next Buy:  ${chalk.green(nextBuyPosition.buyPrice.toFixed(8))} ETH ` +
-                    chalk.dim(`(${(nextBuyPosition.buyPrice * 1000000).toFixed(2)}µ)`));
-      } else {
-        console.log(`    Next Buy:  ${chalk.dim('None in range')}`);
+      const buySellStr = nextBuy && nextSell
+        ? `${(nextBuy.buyPrice * 1000000).toFixed(1)}µ→${(nextSell.sellPrice * 1000000).toFixed(1)}µ`
+        : nextBuy ? `${(nextBuy.buyPrice * 1000000).toFixed(1)}µ→--`
+        : nextSell ? `--→${(nextSell.sellPrice * 1000000).toFixed(1)}µ`
+        : '--';
+
+      const profitStr = bot.totalProfitEth && BigInt(bot.totalProfitEth) > 0
+        ? chalk.green('+' + formatEther(BigInt(bot.totalProfitEth)).slice(0, 6))
+        : chalk.gray('0.00');
+
+      const nameStr = bot.name.slice(0, 13).padEnd(13, ' ');
+
+      console.log(`  ${nameStr} ${statusStr} ${posStr}    ${chalk.dim('...')}    ${chalk.dim('...')}    ${chalk.cyan(buySellStr.padStart(15))}  ${profitStr}`);
+    }
+
+    console.log();
+    console.log(chalk.dim('  Legend: µ = micro ETH (0.000001 ETH) | Pos = holding positions'));
+    console.log();
+
+    // Active Alerts
+    const botsWithErrors = enabledBots.filter(b => b.consecutiveErrors && b.consecutiveErrors > 0);
+    if (botsWithErrors.length > 0) {
+      console.log(chalk.red('⚠️  ACTIVE ALERTS'));
+      console.log(chalk.red('─'.repeat(66)));
+      for (const bot of botsWithErrors) {
+        console.log(chalk.red(`  • ${bot.name}: ${bot.consecutiveErrors} consecutive errors`));
       }
-
-      // Next Sell Point
-      const nextSellPosition = holdingPositions
-        .sort((a, b) => a.sellPrice - b.sellPrice)[0]; // Lowest sell price first
-
-      if (nextSellPosition) {
-        console.log(`    Next Sell: ${chalk.yellow(nextSellPosition.sellPrice.toFixed(8))} ETH ` +
-                    chalk.dim(`(${(nextSellPosition.sellPrice * 1000000).toFixed(2)}µ)`));
-        const profit = ((nextSellPosition.sellPrice - nextSellPosition.buyPrice) / nextSellPosition.buyPrice * 100);
-        console.log(`             ${chalk.dim(`Profit: +${profit.toFixed(1)}%`)}`);
-      } else {
-        console.log(`    Next Sell: ${chalk.dim('No positions holding')}`);
-      }
-
-      // Current Price
-      console.log(`    Cur Price: ${chalk.cyan(bot.currentPrice.toFixed(8))} ETH ` +
-                  chalk.dim(`(${(bot.currentPrice * 1000000).toFixed(2)}µ)`));
-
-      // Performance
-      if (bot.totalBuys > 0 || bot.totalSells > 0) {
-        console.log();
-        console.log(chalk.magenta('  💰 PERFORMANCE'));
-        console.log(`    Buys: ${bot.totalBuys} | Sells: ${bot.totalSells}`);
-        console.log(`    Profit: ${chalk.green(formatEther(BigInt(bot.totalProfitEth)) + ' ETH')}`);
-      }
-
-      // Config Summary
-      console.log();
-      console.log(chalk.dim(`  ⚙️  ${bot.config.numPositions}pos | ${bot.config.takeProfitPercent}%tp | ` +
-                  `${bot.config.maxActivePositions}max | ${bot.config.moonBagPercent}%moon`));
-
       console.log();
     }
 
     // Footer
-    console.log(chalk.dim('─'.repeat(64)));
-    console.log(chalk.dim(`  Auto-refresh: ${refreshCount}/${maxRefreshes}s | Press Ctrl+C to exit`));
+    console.log(chalk.dim('─'.repeat(66)));
+    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Ctrl+C to exit | RPC: ${workingRpc.slice(0, 30)}...`));
     console.log();
 
-  }, 1000); // Refresh every second
+  }, 1000);
 
-  // Wait for the interval to finish
+  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 2) * 1000));
+}
+
+async function monitorSingleBot(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
+  // Select bot to monitor
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to monitor in detail:',
+      choices: [
+        ...enabledBots.map(b => ({ name: `${b.name} (${b.tokenSymbol})`, value: b.id })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  const bot = enabledBots.find(b => b.id === botId);
+  if (!bot) return;
+
+  console.log(chalk.dim(`\nMonitoring ${bot.name}. Press Ctrl+C or wait 60 seconds to return.\n`));
+
+  // Get working RPC
+  const workingRpc = await getWorkingRpc();
+  const { createPublicClient, http, formatEther, formatUnits } = await import('viem');
+  const { base } = await import('viem/chains');
+  const { erc20Abi } = await import('viem');
+
+  const publicClient = createPublicClient({
+    chain: base,
+    transport: http(workingRpc),
+  });
+
+  let refreshCount = 0;
+  const maxRefreshes = 60;
+
+  const interval = setInterval(async () => {
+    refreshCount++;
+    if (refreshCount > maxRefreshes) {
+      clearInterval(interval);
+      console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
+      return;
+    }
+
+    // Clear screen
+    console.log('\x1Bc');
+
+    const timestamp = new Date().toLocaleTimeString();
+
+    // Header with bot name
+    const headerLine = `🔍 ${bot.name.toUpperCase()} - ${bot.tokenSymbol}`;
+    console.log(chalk.bgMagenta.black('╔══════════════════════════════════════════════════════════════════╗'));
+    console.log(chalk.bgMagenta.black(`║  ${headerLine.padEnd(62)} ${timestamp} ║`));
+    console.log(chalk.bgMagenta.black('╚══════════════════════════════════════════════════════════════════╝'));
+    console.log();
+
+    // Status Banner
+    const isRunning = bot.isRunning;
+    const statusBanner = isRunning
+      ? chalk.bgGreen.black('  ● BOT IS RUNNING - ACTIVE TRADING  ')
+      : chalk.bgGray.black('  ○ BOT IS STOPPED - IDLE MODE  ');
+    console.log(`                    ${statusBanner}`);
+    console.log();
+
+    // Fetch all data
+    let ethBalance = BigInt(0);
+    let tokenBalance = BigInt(0);
+    let decimals = 18;
+
+    try {
+      ethBalance = await publicClient.getBalance({
+        address: bot.walletAddress as `0x${string}`,
+      });
+
+      try {
+        decimals = await publicClient.readContract({
+          address: bot.tokenAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'decimals',
+        });
+      } catch {}
+
+      tokenBalance = await publicClient.readContract({
+        address: bot.tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [bot.walletAddress as `0x${string}`],
+      });
+    } catch {}
+
+    // WALLET SECTION
+    console.log(chalk.cyan('💼 WALLET'));
+    console.log(chalk.cyan('─'.repeat(66)));
+    console.log(`  Address: ${chalk.yellow(bot.walletAddress)}`);
+    console.log(`  ETH:     ${chalk.green(formatEther(ethBalance).padEnd(12))} Ξ`);
+    console.log(`  ${bot.tokenSymbol.padEnd(7)}  ${chalk.green(formatUnits(tokenBalance, decimals).padEnd(12))} tokens`);
+    console.log();
+
+    // CONFIGURATION SECTION
+    console.log(chalk.cyan('⚙️  CONFIGURATION'));
+    console.log(chalk.cyan('─'.repeat(66)));
+    console.log(`  Token:        ${chalk.yellow(bot.tokenSymbol)} ${chalk.dim(`(${bot.tokenAddress})`)}`);
+    console.log(`  Grid:         ${bot.config.numPositions} positions`);
+    console.log(`  Take Profit:  ${bot.config.takeProfitPercent}% per position`);
+    console.log(`  Max Active:   ${bot.config.maxActivePositions} concurrent buys`);
+    console.log(`  Moon Bag:     ${bot.config.moonBagEnabled ? bot.config.moonBagPercent + '% kept on sell' : 'Disabled'}`);
+    console.log(`  Buy Amount:   ${bot.config.useFixedBuyAmount ? bot.config.buyAmount + ' ETH fixed' : 'Auto-calculated'}`);
+    console.log(`  Min Profit:   ${bot.config.minProfitPercent}% after gas`);
+    console.log();
+
+    // PRICE & MARKET SECTION
+    console.log(chalk.cyan('📊 PRICE & MARKET'));
+    console.log(chalk.cyan('─'.repeat(66)));
+    console.log(`  Current Price: ${chalk.magenta(bot.currentPrice.toFixed(10))} ETH`);
+    console.log(`                 ${chalk.dim(`(${(bot.currentPrice * 1000000).toFixed(4)} µETH)`)}`);
+    console.log(`  Price Range:   ${chalk.dim('Floor:')} ${(bot.currentPrice * 0.1).toFixed(10)}  ${chalk.dim('Ceiling:')} ${(bot.currentPrice * 4).toFixed(10)}`);
+    console.log();
+
+    // GRID POSITIONS SECTION
+    const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING').sort((a, b) => b.buyPrice - a.buyPrice);
+    const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY').sort((a, b) => b.buyPrice - a.buyPrice);
+    const soldPositions = bot.positions.filter(p => p.status === 'SOLD').slice(-5); // Last 5 sold
+
+    console.log(chalk.cyan('🎯 GRID POSITIONS'));
+    console.log(chalk.cyan('─'.repeat(66)));
+    console.log(`  Total: ${bot.positions.length} | ${chalk.green(holdingPositions.length + ' HOLDING')} | ${chalk.yellow(emptyPositions.length + ' EMPTY')} | ${chalk.blue(bot.positions.filter(p => p.status === 'SOLD').length + ' SOLD')}`);
+    console.log();
+
+    // HOLDING POSITIONS
+    if (holdingPositions.length > 0) {
+      console.log(chalk.green('  📗 HOLDING (Ready to Sell):'));
+      console.log(chalk.dim('     ID  Buy Price      Sell Price     Tokens         Profit %'));
+      console.log(chalk.dim('     ──────────────────────────────────────────────────────────'));
+
+      for (const pos of holdingPositions.slice(0, 5)) { // Show top 5
+        const profit = ((pos.sellPrice - pos.buyPrice) / pos.buyPrice * 100);
+        const tokens = pos.tokensReceived ? formatUnits(BigInt(pos.tokensReceived), decimals).slice(0, 10) : '---';
+        console.log(`     ${String(pos.id).padStart(2)}  ${pos.buyPrice.toFixed(10)}  →  ${pos.sellPrice.toFixed(10)}  ${tokens.padStart(12)}  ${chalk.green('+' + profit.toFixed(1) + '%')}`);
+      }
+
+      if (holdingPositions.length > 5) {
+        console.log(chalk.dim(`     ... and ${holdingPositions.length - 5} more holding positions`));
+      }
+      console.log();
+    }
+
+    // NEXT BUY OPPORTUNITIES
+    const nextBuys = emptyPositions
+      .filter(p => p.buyPrice <= bot.currentPrice * 1.2)
+      .slice(0, 3);
+
+    if (nextBuys.length > 0) {
+      console.log(chalk.yellow('  📙 NEXT BUY OPPORTUNITIES:'));
+      for (const pos of nextBuys) {
+        const dist = ((pos.buyPrice - bot.currentPrice) / bot.currentPrice * 100);
+        const distStr = dist > 0 ? chalk.yellow(`+${dist.toFixed(1)}% above current`) : chalk.green(`${dist.toFixed(1)}% below current`);
+        console.log(`     Position ${pos.id}: Buy at ${pos.buyPrice.toFixed(10)} ETH (${distStr})`);
+      }
+      console.log();
+    }
+
+    // RECENT SELL HISTORY
+    if (soldPositions.length > 0) {
+      console.log(chalk.blue('  📘 RECENT SELLS:'));
+      for (const pos of soldPositions.reverse()) {
+        const profit = ((pos.sellPrice - pos.buyPrice) / pos.buyPrice * 100);
+        const time = pos.sellTimestamp ? new Date(pos.sellTimestamp).toLocaleTimeString() : 'unknown';
+        console.log(`     ${time}: Position ${pos.id} sold for ${chalk.green('+' + profit.toFixed(1) + '%')}`);
+      }
+      console.log();
+    }
+
+    // PERFORMANCE SECTION
+    console.log(chalk.cyan('💰 PERFORMANCE STATS'));
+    console.log(chalk.cyan('─'.repeat(66)));
+    console.log(`  Total Buys:     ${bot.totalBuys || 0}`);
+    console.log(`  Total Sells:    ${bot.totalSells || 0}`);
+    console.log(`  Realized P&L:   ${chalk.green(formatEther(BigInt(bot.totalProfitEth || '0')) + ' ETH')}`);
+
+    // Calculate unrealized P&L
+    let unrealizedPnl = BigInt(0);
+    for (const pos of holdingPositions) {
+      if (pos.tokensReceived) {
+        const currentValue = BigInt(pos.tokensReceived) * BigInt(Math.floor(bot.currentPrice * 1e18)) / BigInt(1e18);
+        const cost = BigInt(pos.ethCost || '0');
+        unrealizedPnl += currentValue - cost;
+      }
+    }
+
+    if (unrealizedPnl > 0) {
+      console.log(`  Unrealized P&L: ${chalk.yellow(formatEther(unrealizedPnl) + ' ETH')} (if sold now)`);
+    }
+
+    const totalPnl = BigInt(bot.totalProfitEth || '0') + unrealizedPnl;
+    console.log(`  Combined P&L:   ${totalPnl >= 0 ? chalk.green('+' + formatEther(totalPnl)) : chalk.red(formatEther(totalPnl))} ETH`);
+    console.log();
+
+    // ACTIVITY LOG
+    console.log(chalk.cyan('📝 RECENT ACTIVITY'));
+    console.log(chalk.cyan('─'.repeat(66)));
+    console.log(`  Created:     ${new Date(bot.createdAt).toLocaleString()}`);
+    console.log(`  Last Update: ${bot.lastUpdated ? new Date(bot.lastUpdated).toLocaleString() : 'Never'}`);
+
+    if (bot.lastTradeAt) {
+      const lastTrade = new Date(bot.lastTradeAt);
+      const minsAgo = Math.floor((Date.now() - lastTrade.getTime()) / 60000);
+      console.log(`  Last Trade:  ${lastTrade.toLocaleString()} (${minsAgo} mins ago)`);
+    } else {
+      console.log(`  Last Trade:  ${chalk.dim('No trades yet')}`);
+    }
+
+    if (bot.consecutiveErrors && bot.consecutiveErrors > 0) {
+      console.log(chalk.red(`  ⚠️  Errors:    ${bot.consecutiveErrors} consecutive errors`));
+    }
+
+    console.log();
+
+    // FOOTER
+    console.log(chalk.dim('═'.repeat(66)));
+    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Ctrl+C to exit | Detail View`));
+    console.log();
+
+  }, 1000);
+
   await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 2) * 1000));
 }
 
@@ -2263,6 +2490,416 @@ async function deleteBot(heartbeatManager: HeartbeatManager, storage: JsonStorag
     await storage.deleteBot(botId);
     console.log(chalk.green('\n✓ Bot deleted'));
     console.log(chalk.dim('Note: Bot wallet still exists in storage but is no longer accessible via CLI\n'));
+  }
+}
+
+// ==================== P&L Reporting Functions ====================
+
+async function showPnLReport() {
+  console.log(chalk.cyan.bold('\n📈 P&L Report\n'));
+
+  // Initialize PnL tracker
+  const tradeHistory = new TradeHistory('./trade-history.json');
+  await tradeHistory.init();
+  const pnLTracker = new PnLTracker(tradeHistory);
+  await pnLTracker.init();
+
+  // Check if there's any trade data
+  const stats = await tradeHistory.getStats();
+  if (stats.totalTrades === 0) {
+    console.log(chalk.yellow('No trade history found. Start trading to see P&L reports.\n'));
+    return;
+  }
+
+  const { reportType } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'reportType',
+      message: 'Select report type:',
+      choices: [
+        { name: '📊 Summary (All bots)', value: 'summary' },
+        { name: '📅 Daily P&L', value: 'daily' },
+        { name: '📆 Weekly P&L', value: 'weekly' },
+        { name: '📅 Monthly P&L', value: 'monthly' },
+        { name: '🤖 Bot-specific P&L', value: 'bot' },
+        { name: '📤 Export to CSV', value: 'export' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (reportType === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  try {
+    switch (reportType) {
+      case 'summary':
+        await showPnLSummary(pnLTracker);
+        break;
+      case 'daily':
+        await showDailyPnL(pnLTracker);
+        break;
+      case 'weekly':
+        await showWeeklyPnL(pnLTracker);
+        break;
+      case 'monthly':
+        await showMonthlyPnL(pnLTracker);
+        break;
+      case 'bot':
+        await showBotPnL(pnLTracker);
+        break;
+      case 'export':
+        await exportToCsv(pnLTracker);
+        break;
+    }
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Error: ${error.message}\n`));
+  }
+}
+
+async function showPnLSummary(pnLTracker: PnLTracker) {
+  console.log(chalk.cyan('\n📊 P&L Summary\n'));
+  console.log(chalk.yellow('─'.repeat(60)));
+
+  const cumulative = await pnLTracker.getCumulativePnL();
+
+  console.log(chalk.cyan('Overall Performance:'));
+  console.log(`  Total Trades: ${chalk.white(cumulative.totalTrades.toString())}`);
+  console.log(`  Total Buys: ${chalk.green(cumulative.totalBuys.toString())}`);
+  console.log(`  Total Sells: ${chalk.blue(cumulative.totalSells.toString())}`);
+  console.log();
+  
+  console.log(chalk.cyan('Volume:'));
+  console.log(`  Buy Volume: ${chalk.yellow(cumulative.totalBuyVolumeEth.toFixed(6))} ETH`);
+  console.log(`  Sell Volume: ${chalk.yellow(cumulative.totalSellVolumeEth.toFixed(6))} ETH`);
+  console.log();
+  
+  console.log(chalk.cyan('Profit/Loss:'));
+  const profitColor = cumulative.totalRealizedProfitEth >= 0 ? chalk.green : chalk.red;
+  console.log(`  Realized Profit: ${profitColor(cumulative.totalRealizedProfitEth.toFixed(6))} ETH`);
+  console.log(`  Gas Costs: ${chalk.red(cumulative.totalGasCostEth.toFixed(6))} ETH`);
+  console.log(`  Net Profit: ${profitColor(cumulative.totalNetProfitEth.toFixed(6))} ETH`);
+  console.log();
+  
+  console.log(chalk.cyan('Statistics:'));
+  console.log(`  Win Rate: ${chalk.yellow(cumulative.winRate.toFixed(1))}%`);
+  console.log(`  Avg Profit/Trade: ${chalk.yellow(cumulative.avgProfitPerTrade.toFixed(6))} ETH`);
+  
+  if (cumulative.firstTradeDate) {
+    const firstDate = new Date(cumulative.firstTradeDate);
+    const lastDate = new Date(cumulative.lastTradeDate!);
+    console.log(`  First Trade: ${chalk.dim(firstDate.toLocaleDateString())}`);
+    console.log(`  Last Trade: ${chalk.dim(lastDate.toLocaleDateString())}`);
+  }
+  
+  console.log(chalk.yellow('─'.repeat(60)));
+  console.log();
+
+  // Show per-bot summary
+  const botSummaries = await pnLTracker.getAllBotPnLSummaries();
+  if (botSummaries.length > 0) {
+    console.log(chalk.cyan('By Bot:'));
+    for (const bot of botSummaries) {
+      const botProfitColor = bot.netProfitEth >= 0 ? chalk.green : chalk.red;
+      console.log(`  ${chalk.bold(bot.botName)} (${bot.tokenSymbol}):`);
+      console.log(`    Trades: ${bot.buys} buys, ${bot.sells} sells`);
+      console.log(`    Net P&L: ${botProfitColor(bot.netProfitEth.toFixed(6))} ETH`);
+      console.log(`    Avg Profit: ${chalk.yellow(bot.avgProfitPercent.toFixed(2))}%`);
+    }
+    console.log();
+  }
+}
+
+async function showDailyPnL(pnLTracker: PnLTracker) {
+  console.log(chalk.cyan('\n📅 Daily P&L (Last 14 days)\n'));
+  console.log(chalk.yellow('─'.repeat(80)));
+  
+  const dailyPnL = await pnLTracker.getDailyPnLHistory(14);
+  
+  console.log(chalk.bold(
+    'Date'.padEnd(12) + 
+    'Trades'.padEnd(8) + 
+    'Buys'.padEnd(8) + 
+    'Sells'.padEnd(8) + 
+    'Profit ETH'.padEnd(14) + 
+    'Gas ETH'.padEnd(12) + 
+    'Net ETH'
+  ));
+  console.log(chalk.yellow('─'.repeat(80)));
+  
+  for (const day of dailyPnL) {
+    if (day.totalTrades === 0) continue;
+    
+    const date = new Date(day.startDate).toLocaleDateString();
+    const profitColor = day.netProfitEth >= 0 ? chalk.green : chalk.red;
+    
+    console.log(
+      chalk.dim(date.padEnd(12)) +
+      day.totalTrades.toString().padEnd(8) +
+      day.buyCount.toString().padEnd(8) +
+      day.sellCount.toString().padEnd(8) +
+      profitColor(day.realizedProfitEth.toFixed(6).padEnd(14)) +
+      chalk.red(day.totalGasCostEth.toFixed(6).padEnd(12)) +
+      profitColor(day.netProfitEth.toFixed(6))
+    );
+  }
+  
+  console.log(chalk.yellow('─'.repeat(80)));
+  console.log();
+}
+
+async function showWeeklyPnL(pnLTracker: PnLTracker) {
+  console.log(chalk.cyan('\n📆 Weekly P&L (Last 8 weeks)\n'));
+  console.log(chalk.yellow('─'.repeat(80)));
+  
+  const weeklyPnL = await pnLTracker.getWeeklyPnLHistory(8);
+  
+  console.log(chalk.bold(
+    'Week'.padEnd(16) + 
+    'Trades'.padEnd(8) + 
+    'Buys'.padEnd(8) + 
+    'Sells'.padEnd(8) + 
+    'Profit ETH'.padEnd(14) + 
+    'Gas ETH'.padEnd(12) + 
+    'Net ETH'
+  ));
+  console.log(chalk.yellow('─'.repeat(80)));
+  
+  for (const week of weeklyPnL) {
+    if (week.totalTrades === 0) continue;
+    
+    const profitColor = week.netProfitEth >= 0 ? chalk.green : chalk.red;
+    
+    console.log(
+      chalk.dim(week.period.padEnd(16)) +
+      week.totalTrades.toString().padEnd(8) +
+      week.buyCount.toString().padEnd(8) +
+      week.sellCount.toString().padEnd(8) +
+      profitColor(week.realizedProfitEth.toFixed(6).padEnd(14)) +
+      chalk.red(week.totalGasCostEth.toFixed(6).padEnd(12)) +
+      profitColor(week.netProfitEth.toFixed(6))
+    );
+  }
+  
+  console.log(chalk.yellow('─'.repeat(80)));
+  console.log();
+}
+
+async function showMonthlyPnL(pnLTracker: PnLTracker) {
+  console.log(chalk.cyan('\n📅 Monthly P&L (Last 6 months)\n'));
+  console.log(chalk.yellow('─'.repeat(80)));
+  
+  const monthlyPnL = await pnLTracker.getMonthlyPnLHistory(6);
+  
+  console.log(chalk.bold(
+    'Month'.padEnd(14) + 
+    'Trades'.padEnd(8) + 
+    'Buys'.padEnd(8) + 
+    'Sells'.padEnd(8) + 
+    'Profit ETH'.padEnd(14) + 
+    'Gas ETH'.padEnd(12) + 
+    'Net ETH'
+  ));
+  console.log(chalk.yellow('─'.repeat(80)));
+  
+  for (const month of monthlyPnL) {
+    if (month.totalTrades === 0) continue;
+    
+    const profitColor = month.netProfitEth >= 0 ? chalk.green : chalk.red;
+    
+    console.log(
+      chalk.dim(month.period.padEnd(14)) +
+      month.totalTrades.toString().padEnd(8) +
+      month.buyCount.toString().padEnd(8) +
+      month.sellCount.toString().padEnd(8) +
+      profitColor(month.realizedProfitEth.toFixed(6).padEnd(14)) +
+      chalk.red(month.totalGasCostEth.toFixed(6).padEnd(12)) +
+      profitColor(month.netProfitEth.toFixed(6))
+    );
+  }
+  
+  console.log(chalk.yellow('─'.repeat(80)));
+  console.log();
+}
+
+async function showBotPnL(pnLTracker: PnLTracker) {
+  const tradeHistory = pnLTracker.getTradeHistory();
+  const botIds = await tradeHistory.getBotIds();
+  
+  if (botIds.length === 0) {
+    console.log(chalk.yellow('\nNo bot trade history found.\n'));
+    return;
+  }
+  
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot:',
+      choices: [
+        ...botIds.map(id => ({ name: `Bot ${id.slice(0, 8)}...`, value: id })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+  
+  if (botId === 'back') return;
+  
+  const botPnL = await pnLTracker.getBotPnL(botId);
+  const botTrades = await tradeHistory.getTradesByBot(botId);
+  
+  console.log(chalk.cyan(`\n🤖 Bot: ${botPnL.botName}\n`));
+  console.log(chalk.yellow('─'.repeat(60)));
+  
+  console.log(`Token: ${chalk.yellow(botPnL.tokenSymbol)}`);
+  console.log(`Total Trades: ${chalk.white(botPnL.totalTrades.toString())}`);
+  console.log(`Buys: ${chalk.green(botPnL.buys.toString())}`);
+  console.log(`Sells: ${chalk.blue(botPnL.sells.toString())}`);
+  console.log();
+  
+  const profitColor = botPnL.netProfitEth >= 0 ? chalk.green : chalk.red;
+  console.log(`Realized Profit: ${profitColor(botPnL.realizedProfitEth.toFixed(6))} ETH`);
+  console.log(`Gas Costs: ${chalk.red(botPnL.gasCostEth.toFixed(6))} ETH`);
+  console.log(`Net P&L: ${profitColor(botPnL.netProfitEth.toFixed(6))} ETH`);
+  console.log(`Avg Profit: ${chalk.yellow(botPnL.avgProfitPercent.toFixed(2))}%`);
+  
+  if (botPnL.bestTradeProfit !== undefined) {
+    console.log(`Best Trade: ${chalk.green('+' + botPnL.bestTradeProfit.toFixed(6))} ETH`);
+  }
+  if (botPnL.worstTradeProfit !== undefined) {
+    console.log(`Worst Trade: ${chalk.red(botPnL.worstTradeProfit.toFixed(6))} ETH`);
+  }
+  
+  console.log(chalk.yellow('─'.repeat(60)));
+  
+  // Show recent trades
+  console.log(chalk.cyan('\nRecent Trades:'));
+  const recentTrades = botTrades.slice(0, 5);
+  for (const trade of recentTrades) {
+    const date = new Date(trade.timestamp).toLocaleDateString();
+    const actionColor = trade.action === 'buy' ? chalk.green : chalk.blue;
+    const profitStr = trade.action === 'sell' && trade.profit 
+      ? ` (${Number(formatEther(BigInt(trade.profit))).toFixed(6)} ETH)` 
+      : '';
+    console.log(`  ${chalk.dim(date)} ${actionColor(trade.action.toUpperCase())}${profitStr}`);
+  }
+  console.log();
+}
+
+async function exportToCsv(pnLTracker: PnLTracker) {
+  const { exportType } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'exportType',
+      message: 'Select export type:',
+      choices: [
+        { name: '📁 Export all trades', value: 'all' },
+        { name: '🤖 Export by bot', value: 'bot' },
+        { name: '📅 Export by date range', value: 'date' },
+        { name: '📅 Export by year (tax report)', value: 'year' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+  
+  if (exportType === 'back') return;
+  
+  const tradeHistory = pnLTracker.getTradeHistory();
+  const csvExporter = new CsvExporter(tradeHistory);
+  await csvExporter.init();
+  
+  let csv: string;
+  let filename: string;
+  
+  switch (exportType) {
+    case 'all':
+      csv = await csvExporter.exportAll();
+      filename = csvExporter.generateFilename();
+      break;
+      
+    case 'bot': {
+      const botIds = await tradeHistory.getBotIds();
+      const { botId } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'botId',
+          message: 'Select bot:',
+          choices: botIds.map(id => ({ name: `Bot ${id.slice(0, 8)}...`, value: id })),
+        },
+      ]);
+      
+      const trades = await tradeHistory.getTradesByBot(botId);
+      const botName = trades[0]?.botName || 'Unknown';
+      csv = await csvExporter.exportByBot(botId);
+      filename = csvExporter.generateFilename({ botId, botName });
+      break;
+    }
+      
+    case 'date': {
+      const { startDate, endDate } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'startDate',
+          message: 'Start date (YYYY-MM-DD):',
+          validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || 'Invalid date format',
+        },
+        {
+          type: 'input',
+          name: 'endDate',
+          message: 'End date (YYYY-MM-DD):',
+          validate: (input) => /^\d{4}-\d{2}-\d{2}$/.test(input) || 'Invalid date format',
+        },
+      ]);
+      
+      csv = await csvExporter.exportByDateRange(new Date(startDate), new Date(endDate));
+      filename = csvExporter.generateFilename({ 
+        startDate: new Date(startDate), 
+        endDate: new Date(endDate) 
+      });
+      break;
+    }
+      
+    case 'year': {
+      const currentYear = new Date().getFullYear();
+      const { year } = await inquirer.prompt([
+        {
+          type: 'number',
+          name: 'year',
+          message: 'Year:',
+          default: currentYear,
+        },
+      ]);
+      
+      csv = await csvExporter.exportByYear(year);
+      filename = csvExporter.generateFilename({ year });
+      break;
+    }
+      
+    default:
+      return;
+  }
+  
+  // Write to file
+  const { filepath } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'filepath',
+      message: 'Save to file:',
+      default: filename,
+    },
+  ]);
+  
+  try {
+    await csvExporter.exportToFile(filepath, await pnLTracker.getTradesForExport(
+      exportType === 'bot' ? { botId: (await inquirer.prompt([{ type: 'list', name: 'bid', message: 'Select bot:', choices: (await tradeHistory.getBotIds()).map(id => ({ name: `Bot ${id.slice(0, 8)}...`, value: id })) }])).bid } : 
+      exportType === 'date' ? { startDate: new Date((await inquirer.prompt([{ type: 'input', name: 'sd', message: 'Start (YYYY-MM-DD):', validate: (i) => /^\d{4}-\d{2}-\d{2}$/.test(i) }])).sd).getTime(), endDate: new Date((await inquirer.prompt([{ type: 'input', name: 'ed', message: 'End (YYYY-MM-DD):', validate: (i) => /^\d{4}-\d{2}-\d{2}$/.test(i) }])).ed).getTime() } : 
+      undefined
+    ));
+    console.log(chalk.green(`\n✓ Exported to ${filepath}\n`));
+  } catch (error: any) {
+    console.log(chalk.red(`\n✗ Export failed: ${error.message}\n`));
   }
 }
 
