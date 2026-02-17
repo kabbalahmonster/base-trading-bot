@@ -103,6 +103,7 @@ async function main() {
           { name: '⏹️  Stop bot(s)', value: 'stop' },
           { name: '⏸️  Enable/Disable bot', value: 'toggle' },
           { name: '📊 View status', value: 'status' },
+          { name: '📺 Monitor bots (live)', value: 'monitor' },
           { name: '💰 Fund wallet', value: 'fund' },
           { name: '👛 View wallet balances', value: 'view_balances' },
           { name: '📤 Send ETH to external', value: 'send_external' },
@@ -136,6 +137,9 @@ async function main() {
           break;
         case 'status':
           await showStatus(heartbeatManager, storage);
+          break;
+        case 'monitor':
+          await monitorBots(storage, heartbeatManager);
           break;
         case 'fund':
           await fundWallet(walletManager, storage);
@@ -570,6 +574,173 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
       console.log();
     }
   }
+}
+
+async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
+  console.log(chalk.cyan.bold('\n📺 Bot Monitor - Live Dashboard\n'));
+  console.log(chalk.dim('Press Ctrl+C or wait 30 seconds to return to menu\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found. Create one first.\n'));
+    return;
+  }
+
+  const enabledBots = bots.filter(b => b.enabled);
+  if (enabledBots.length === 0) {
+    console.log(chalk.yellow('No enabled bots to monitor.\n'));
+    return;
+  }
+
+  // Get working RPC
+  const workingRpc = await getWorkingRpc();
+  const { createPublicClient, http, formatEther, formatUnits } = await import('viem');
+  const { base } = await import('viem/chains');
+  const { erc20Abi } = await import('viem');
+
+  const publicClient = createPublicClient({
+    chain: base,
+    transport: http(workingRpc),
+  });
+
+  let refreshCount = 0;
+  const maxRefreshes = 30; // Run for 30 seconds (1 refresh per second)
+
+  const interval = setInterval(async () => {
+    refreshCount++;
+    if (refreshCount > maxRefreshes) {
+      clearInterval(interval);
+      console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
+      return;
+    }
+
+    // Clear screen (ANSI escape code)
+    console.log('\x1Bc');
+
+    // Header
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(chalk.cyan.bold('╔════════════════════════════════════════════════════════════════╗'));
+    console.log(chalk.cyan.bold(`║  🤖 BASE GRID BOT MONITOR                ${timestamp}    ║`));
+    console.log(chalk.cyan.bold('╚════════════════════════════════════════════════════════════════╝'));
+    console.log();
+
+    // System Overview
+    const status = heartbeatManager.getStatus();
+    console.log(chalk.yellow('📊 SYSTEM OVERVIEW'));
+    console.log(chalk.yellow('─'.repeat(64)));
+    console.log(`  Heartbeat: ${status.isRunning ? chalk.green('● RUNNING') : chalk.red('○ STOPPED')}`);
+    console.log(`  Active Bots: ${chalk.green(status.totalBots.toString())} / ${enabledBots.length} enabled`);
+    console.log(`  RPC: ${chalk.dim(workingRpc.slice(0, 40))}...`);
+    console.log();
+
+    // Bot Details
+    for (let i = 0; i < enabledBots.length; i++) {
+      const bot = enabledBots[i];
+      const isActive = bot.isRunning;
+
+      // Bot header
+      const botStatus = isActive ? chalk.green('● LIVE') : chalk.gray('○ IDLE');
+      console.log(chalk.cyan(`📈 BOT ${i + 1}/${enabledBots.length}: ${chalk.bold(bot.name)} ${botStatus}`));
+      console.log(chalk.cyan('─'.repeat(64)));
+
+      // Basic Info
+      console.log(`  Token: ${chalk.yellow(bot.tokenSymbol)} ${chalk.dim(`(${bot.tokenAddress.slice(0, 12)}...)`)}`);
+      console.log(`  Wallet: ${chalk.dim(bot.walletAddress)}`);
+
+      // Fetch balances
+      try {
+        const ethBalance = await publicClient.getBalance({
+          address: bot.walletAddress as `0x${string}`,
+        });
+        console.log(`  ETH Balance: ${chalk.green(formatEther(ethBalance) + ' ETH')}`);
+
+        // Token balance
+        let decimals = 18;
+        try {
+          decimals = await publicClient.readContract({
+            address: bot.tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'decimals',
+          });
+        } catch {}
+
+        const tokenBalance = await publicClient.readContract({
+          address: bot.tokenAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [bot.walletAddress as `0x${string}`],
+        });
+        console.log(`  Token Balance: ${chalk.green(formatUnits(tokenBalance, decimals) + ' ' + bot.tokenSymbol)}`);
+      } catch {
+        console.log(chalk.dim('  Balance: Unable to fetch'));
+      }
+
+      // Grid Info
+      const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING');
+      const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY');
+      const soldPositions = bot.positions.filter(p => p.status === 'SOLD');
+
+      console.log();
+      console.log(chalk.magenta('  📊 GRID STATUS'));
+      console.log(`    Positions: ${chalk.green(holdingPositions.length + ' holding')} | ` +
+                  `${chalk.yellow(emptyPositions.length + ' empty')} | ` +
+                  `${chalk.blue(soldPositions.length + ' sold')} / ` +
+                  `${bot.positions.length} total`);
+
+      // Next Buy Point
+      const nextBuyPosition = emptyPositions
+        .filter(p => p.buyPrice <= (bot.currentPrice * 1.1)) // Within 10% of current price
+        .sort((a, b) => b.buyPrice - a.buyPrice)[0]; // Highest buy price first
+
+      if (nextBuyPosition) {
+        console.log(`    Next Buy:  ${chalk.green(nextBuyPosition.buyPrice.toFixed(8))} ETH ` +
+                    chalk.dim(`(${(nextBuyPosition.buyPrice * 1000000).toFixed(2)}µ)`));
+      } else {
+        console.log(`    Next Buy:  ${chalk.dim('None in range')}`);
+      }
+
+      // Next Sell Point
+      const nextSellPosition = holdingPositions
+        .sort((a, b) => a.sellPrice - b.sellPrice)[0]; // Lowest sell price first
+
+      if (nextSellPosition) {
+        console.log(`    Next Sell: ${chalk.yellow(nextSellPosition.sellPrice.toFixed(8))} ETH ` +
+                    chalk.dim(`(${(nextSellPosition.sellPrice * 1000000).toFixed(2)}µ)`));
+        const profit = ((nextSellPosition.sellPrice - nextSellPosition.buyPrice) / nextSellPosition.buyPrice * 100);
+        console.log(`             ${chalk.dim(`Profit: +${profit.toFixed(1)}%`)}`);
+      } else {
+        console.log(`    Next Sell: ${chalk.dim('No positions holding')}`);
+      }
+
+      // Current Price
+      console.log(`    Cur Price: ${chalk.cyan(bot.currentPrice.toFixed(8))} ETH ` +
+                  chalk.dim(`(${(bot.currentPrice * 1000000).toFixed(2)}µ)`));
+
+      // Performance
+      if (bot.totalBuys > 0 || bot.totalSells > 0) {
+        console.log();
+        console.log(chalk.magenta('  💰 PERFORMANCE'));
+        console.log(`    Buys: ${bot.totalBuys} | Sells: ${bot.totalSells}`);
+        console.log(`    Profit: ${chalk.green(formatEther(BigInt(bot.totalProfitEth)) + ' ETH')}`);
+      }
+
+      // Config Summary
+      console.log();
+      console.log(chalk.dim(`  ⚙️  ${bot.config.numPositions}pos | ${bot.config.takeProfitPercent}%tp | ` +
+                  `${bot.config.maxActivePositions}max | ${bot.config.moonBagPercent}%moon`));
+
+      console.log();
+    }
+
+    // Footer
+    console.log(chalk.dim('─'.repeat(64)));
+    console.log(chalk.dim(`  Auto-refresh: ${refreshCount}/${maxRefreshes}s | Press Ctrl+C to exit`));
+    console.log();
+
+  }, 1000); // Refresh every second
+
+  // Wait for the interval to finish
+  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 2) * 1000));
 }
 
 async function viewWalletBalances(storage: JsonStorage, walletManager: WalletManager) {
