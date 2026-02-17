@@ -18,6 +18,60 @@ dotenv.config();
 const RPC_URL = process.env.BASE_RPC_URL || 'https://base.llamarpc.com';
 const ZEROX_API_KEY = process.env.ZEROX_API_KEY;
 
+// Fallback RPC endpoints for resilience
+const RPC_FALLBACKS = [
+  'https://base.llamarpc.com',
+  'https://mainnet.base.org',
+  'https://base.publicnode.com',
+  'https://base.drpc.org',
+  'https://1rpc.io/base',
+];
+
+// Track working RPC
+let currentRpcUrl = RPC_URL;
+let lastSuccessfulRpcIndex = 0;
+
+/**
+ * Get a working RPC URL with fallback support
+ */
+async function getWorkingRpc(): Promise<string> {
+  // First try the current/preferred RPC
+  const rpcsToTry = [currentRpcUrl, ...RPC_FALLBACKS.filter(r => r !== currentRpcUrl)];
+  
+  for (let i = 0; i < rpcsToTry.length; i++) {
+    const rpc = rpcsToTry[i];
+    try {
+      const { createPublicClient, http } = await import('viem');
+      const { base } = await import('viem/chains');
+      
+      const client = createPublicClient({
+        chain: base,
+        transport: http(rpc),
+      });
+      
+      // Test connection with a simple block number request
+      await client.getBlockNumber();
+      
+      // Success! Update current RPC
+      currentRpcUrl = rpc;
+      lastSuccessfulRpcIndex = i;
+      
+      if (i > 0) {
+        console.log(chalk.green(`✓ Switched to working RPC: ${rpc}`));
+      }
+      
+      return rpc;
+    } catch (error) {
+      console.log(chalk.yellow(`⚠ RPC failed: ${rpc}`));
+      continue;
+    }
+  }
+  
+  // All RPCs failed, return default and let it fail later with proper error
+  console.log(chalk.red('✗ All RPC endpoints failed. Using default.'));
+  return RPC_URL;
+}
+
 console.log(chalk.cyan.bold('\n🤖 Base Grid Trading Bot\n'));
 
 async function main() {
@@ -348,7 +402,10 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
 
 async function viewWalletBalances(storage: JsonStorage) {
   console.log(chalk.cyan('\n👛 Wallet Balances\n'));
-  console.log(chalk.dim(`Using RPC: ${RPC_URL}\n`));
+  
+  // Get working RPC
+  const workingRpc = await getWorkingRpc();
+  console.log(chalk.dim(`Using RPC: ${workingRpc}\n`));
 
   const mainWallet = await storage.getMainWallet();
   if (!mainWallet) {
@@ -364,7 +421,7 @@ async function viewWalletBalances(storage: JsonStorage) {
 
     const publicClient = createPublicClient({
       chain: base,
-      transport: http(RPC_URL),
+      transport: http(workingRpc),
     });
 
     // Verify chain connection
@@ -373,7 +430,14 @@ async function viewWalletBalances(storage: JsonStorage) {
       console.log(chalk.dim(`Connected to Base. Block: ${blockNumber}\n`));
     } catch (e: any) {
       console.log(chalk.red(`⚠ RPC Connection failed: ${e.message}`));
-      console.log(chalk.yellow(`Try setting BASE_RPC_URL in .env file\n`));
+      console.log(chalk.yellow(`Trying fallback RPCs...\n`));
+      
+      // Try to get another working RPC
+      const fallbackRpc = await getWorkingRpc();
+      if (fallbackRpc !== workingRpc) {
+        console.log(chalk.green(`✓ Using fallback RPC: ${fallbackRpc}\n`));
+        return viewWalletBalances(storage); // Retry with new RPC
+      }
       return;
     }
 
@@ -464,6 +528,7 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
   }
 
   try {
+    const workingRpc = await getWorkingRpc();
     const { createWalletClient, http, parseEther } = await import('viem');
     const { base } = await import('viem/chains');
 
@@ -471,7 +536,7 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
     const walletClient = createWalletClient({
       account: mainAccount,
       chain: base,
-      transport: http(RPC_URL),
+      transport: http(workingRpc),
     });
 
     console.log(chalk.dim('Sending transaction...'));
@@ -486,7 +551,7 @@ async function fundWallet(walletManager: WalletManager, storage: JsonStorage) {
 
     const publicClient = createPublicClient({
       chain: base,
-      transport: http(RPC_URL),
+      transport: http(workingRpc),
     });
 
     await publicClient.waitForTransactionReceipt({ hash: txHash });
@@ -559,9 +624,10 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
     const { createPublicClient, http, formatEther } = await import('viem');
     const { base } = await import('viem/chains');
     
+    const workingRpc = await getWorkingRpc();
     const publicClient = createPublicClient({
       chain: base,
-      transport: http(RPC_URL),
+      transport: http(workingRpc),
     });
     
     const balance = await publicClient.getBalance({
@@ -639,14 +705,14 @@ async function sendToExternalWallet(walletManager: WalletManager, storage: JsonS
     }
     
     // Check actual balance before sending
-    const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL) });
+    const publicClient = createPublicClient({ chain: base, transport: http(workingRpc) });
     const actualBalance = await publicClient.getBalance({ address: account.address });
     console.log(chalk.dim(`Verifying balance: ${Number(actualBalance) / 1e18} ETH`));
     
     const walletClient = createWalletClient({
       account,
       chain: base,
-      transport: http(RPC_URL),
+      transport: http(workingRpc),
     });
 
     console.log(chalk.dim('Sending transaction...'));
@@ -769,6 +835,7 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
   }
 
   try {
+    const workingRpc = await getWorkingRpc();
     const { createWalletClient, http, parseUnits, erc20Abi } = await import('viem');
     const { base } = await import('viem/chains');
 
@@ -776,13 +843,13 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
     const walletClient = createWalletClient({
       account,
       chain: base,
-      transport: http(RPC_URL),
+      transport: http(workingRpc),
     });
 
     // Get token decimals (assume 18 if fails)
     let decimals = 18;
     try {
-      const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL) });
+      const publicClient = createPublicClient({ chain: base, transport: http(workingRpc) });
       decimals = await publicClient.readContract({
         address: tokenAddress as `0x${string}`,
         abi: erc20Abi,
@@ -796,6 +863,7 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
 
     console.log(chalk.dim('Sending token transaction...'));
 
+    const workingRpc = await getWorkingRpc();
     const txHash = await walletClient.writeContract({
       address: tokenAddress as `0x${string}`,
       abi: erc20Abi,
@@ -806,7 +874,7 @@ async function sendTokensToExternal(walletManager: WalletManager, storage: JsonS
     console.log(chalk.green(`\n✓ Transaction sent: ${txHash}`));
     console.log(chalk.dim('Waiting for confirmation...'));
 
-    const publicClient = createPublicClient({ chain: base, transport: http(RPC_URL) });
+    const publicClient = createPublicClient({ chain: base, transport: http(workingRpc) });
     await publicClient.waitForTransactionReceipt({ hash: txHash });
     console.log(chalk.green(`✓ Sent ${amount} tokens to ${recipient.slice(0, 10)}... successfully!\n`));
 
@@ -1024,12 +1092,13 @@ async function reclaimFunds(walletManager: WalletManager, storage: JsonStorage) 
 
 async function getBotEthBalance(_walletManager: WalletManager, bot: BotInstance): Promise<string> {
   try {
+    const workingRpc = await getWorkingRpc();
     const { createPublicClient, http, formatEther } = await import('viem');
     const { base } = await import('viem/chains');
     
     const publicClient = createPublicClient({
       chain: base,
-      transport: http(RPC_URL),
+      transport: http(workingRpc),
     });
     
     const balance = await publicClient.getBalance({
@@ -1043,13 +1112,14 @@ async function getBotEthBalance(_walletManager: WalletManager, bot: BotInstance)
 }
 
 async function reclaimBotEth(walletManager: WalletManager, storage: JsonStorage, bot: BotInstance, mainAddress: string): Promise<boolean> {
+  const workingRpc = await getWorkingRpc();
   const { createWalletClient, http, parseEther } = await import('viem');
   const { base } = await import('viem/chains');
   const { createPublicClient } = await import('viem');
   
   const publicClient = createPublicClient({
     chain: base,
-    transport: http(RPC_URL),
+    transport: http(workingRpc),
   });
   
   // Get bot's balance
@@ -1082,7 +1152,7 @@ async function reclaimBotEth(walletManager: WalletManager, storage: JsonStorage,
   const walletClient = createWalletClient({
     account,
     chain: base,
-    transport: http(RPC_URL),
+    transport: http(workingRpc),
   });
   
   const txHash = await walletClient.sendTransaction({
