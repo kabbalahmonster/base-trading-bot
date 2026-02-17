@@ -9,7 +9,7 @@ import { JsonStorage } from './storage/JsonStorage';
 import { HeartbeatManager } from './bot/HeartbeatManager';
 import { GridCalculator } from './grid/GridCalculator';
 import { BotInstance, GridConfig } from './types';
-import { parseEther, formatEther, createPublicClient } from 'viem';
+import { formatEther, createPublicClient } from 'viem';
 import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';
 
@@ -282,7 +282,7 @@ async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage
   console.log(chalk.green('\n✓ Bot(s) started\n'));
 }
 
-async function stopBot(heartbeatManager: HeartbeatManager, storage: JsonStorage) {
+async function stopBot(heartbeatManager: HeartbeatManager, _storage: JsonStorage) {
   const status = heartbeatManager.getStatus();
   if (status.totalBots === 0) {
     console.log(chalk.yellow('\nNo running bots\n'));
@@ -424,6 +424,9 @@ async function reclaimFunds(walletManager: WalletManager, storage: JsonStorage) 
       ],
     },
   ]);
+
+  // botId is used for future implementation
+  console.log(chalk.dim(`Selected: ${botId === 'all' ? 'All bots' : 'Single bot'}`));
 
   const mainWallet = await storage.getMainWallet();
   if (!mainWallet) {

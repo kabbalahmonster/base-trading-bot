@@ -398,13 +398,12 @@ export class TradingBot {
         value: BigInt(quote.value || '0'),
         gas: BigInt(quote.gas),
         gasPrice: BigInt(quote.gasPrice),
-        chain: base,
       });
 
       console.log(`   Transaction sent: ${txHash}`);
 
-      // Wait for receipt
-      const receipt = await this.walletClient!.waitForTransactionReceipt({ hash: txHash });
+      // Wait for receipt using public client
+      const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
 
       if (receipt.status === 'success') {
         // Reset error counter on success
