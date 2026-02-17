@@ -2,7 +2,7 @@
 
 import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
-import { BotStorage, BotInstance, MainWallet, WalletDictionary } from '../types';
+import { BotStorage, BotInstance, MainWallet, WalletDictionary } from '../types/index.js';
 
 const DEFAULT_DATA: BotStorage = {
   walletDictionary: {},

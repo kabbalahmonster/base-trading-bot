@@ -1,7 +1,7 @@
 // src/api/ZeroXApi.ts
 
 import axios, { AxiosInstance } from 'axios';
-import { ZeroXQuote } from '../types';
+import { ZeroXQuote } from '../types/index.js';
 
 const ZEROX_API_BASE = 'https://api.0x.org';
 const CHAIN_ID = 8453; // Base

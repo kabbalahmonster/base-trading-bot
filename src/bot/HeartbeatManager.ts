@@ -1,10 +1,10 @@
 // src/bot/HeartbeatManager.ts
 
-import { TradingBot } from './TradingBot';
-import { BotInstance } from '../types';
-import { WalletManager } from '../wallet/WalletManager';
-import { ZeroXApi } from '../api/ZeroXApi';
-import { JsonStorage } from '../storage/JsonStorage';
+import { TradingBot } from './TradingBot.js';
+import { BotInstance } from '../types/index.js';
+import { WalletManager } from '../wallet/WalletManager.js';
+import { ZeroXApi } from '../api/ZeroXApi.js';
+import { JsonStorage } from '../storage/JsonStorage.js';
 
 export class HeartbeatManager {
   private bots: Map<string, TradingBot> = new Map();

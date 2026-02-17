@@ -1,6 +1,6 @@
 // src/grid/GridCalculator.ts
 
-import { Position, GridConfig } from '../types';
+import { Position, GridConfig } from '../types/index.js';
 
 export class GridCalculator {
   /**

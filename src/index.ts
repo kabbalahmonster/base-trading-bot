@@ -3,12 +3,12 @@
 
 import chalk from 'chalk';
 import inquirer from 'inquirer';
-import { WalletManager } from './wallet/WalletManager';
-import { ZeroXApi } from './api/ZeroXApi';
-import { JsonStorage } from './storage/JsonStorage';
-import { HeartbeatManager } from './bot/HeartbeatManager';
-import { GridCalculator } from './grid/GridCalculator';
-import { BotInstance, GridConfig } from './types';
+import { WalletManager } from './wallet/WalletManager.js';
+import { ZeroXApi } from './api/ZeroXApi.js';
+import { JsonStorage } from './storage/JsonStorage.js';
+import { HeartbeatManager } from './bot/HeartbeatManager.js';
+import { GridCalculator } from './grid/GridCalculator.js';
+import { BotInstance, GridConfig } from './types/index.js';
 import { formatEther, createPublicClient } from 'viem';
 import { randomUUID } from 'crypto';
 import dotenv from 'dotenv';

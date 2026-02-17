@@ -4,7 +4,7 @@ import { generatePrivateKey, privateKeyToAccount, Account } from 'viem/accounts'
 import { createWalletClient, http, publicActions } from 'viem';
 import { base } from 'viem/chains';
 import CryptoJS from 'crypto-js';
-import { MainWallet, WalletData, WalletDictionary } from '../types';
+import { MainWallet, WalletData, WalletDictionary } from '../types/index.js';
 
 const PBKDF2_ITERATIONS = 600000;
 const SALT_LENGTH = 32;

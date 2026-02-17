@@ -2,11 +2,11 @@
 
 import { WalletClient, formatEther, parseEther, createPublicClient, http, erc20Abi } from 'viem';
 import { base } from 'viem/chains';
-import { BotInstance, Position, TradeResult } from '../types';
-import { WalletManager } from '../wallet/WalletManager';
-import { ZeroXApi } from '../api/ZeroXApi';
-import { GridCalculator } from '../grid/GridCalculator';
-import { JsonStorage } from '../storage/JsonStorage';
+import { BotInstance, Position, TradeResult } from '../types/index.js';
+import { WalletManager } from '../wallet/WalletManager.js';
+import { ZeroXApi } from '../api/ZeroXApi.js';
+import { GridCalculator } from '../grid/GridCalculator.js';
+import { JsonStorage } from '../storage/JsonStorage.js';
 
 // Price discovery via 0x API
 
