@@ -490,15 +490,67 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
 
   if (bots.length > 0) {
     console.log(chalk.cyan('All Bots:\n'));
+    
+    // Get working RPC for balance checks
+    const workingRpc = await getWorkingRpc();
+    const { createPublicClient, http, formatEther, formatUnits } = await import('viem');
+    const { base } = await import('viem/chains');
+    const { erc20Abi } = await import('viem');
+    
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(workingRpc),
+    });
+    
     for (const bot of bots) {
       const enabledStatus = bot.enabled ? chalk.green('✓') : chalk.red('✗');
       const runningStatus = bot.isRunning ? chalk.green('● RUNNING') : chalk.gray('○ Stopped');
       const buyAmountInfo = bot.config.useFixedBuyAmount 
         ? chalk.dim(`[${bot.config.buyAmount} ETH/buy]`) 
         : chalk.dim('[auto-buy]');
+      
       console.log(`  ${enabledStatus} ${bot.name}: ${runningStatus} ${buyAmountInfo} ${!bot.enabled ? chalk.red('[DISABLED]') : ''}`);
+      console.log(`     Token: ${bot.tokenSymbol} (${bot.tokenAddress.slice(0, 10)}...)`);
+      console.log(`     Wallet: ${bot.walletAddress}`);
+      
+      // Fetch balances
+      try {
+        const ethBalance = await publicClient.getBalance({
+          address: bot.walletAddress as `0x${string}`,
+        });
+        console.log(`     ETH Balance: ${formatEther(ethBalance)} ETH`);
+        
+        // Get token decimals
+        let decimals = 18;
+        try {
+          decimals = await publicClient.readContract({
+            address: bot.tokenAddress as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'decimals',
+          });
+        } catch {
+          // Use default 18
+        }
+        
+        // Get token balance
+        const tokenBalance = await publicClient.readContract({
+          address: bot.tokenAddress as `0x${string}`,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [bot.walletAddress as `0x${string}`],
+        });
+        console.log(`     ${bot.tokenSymbol} Balance: ${formatUnits(tokenBalance, decimals)}`);
+        
+        // Show active positions
+        const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING').length;
+        if (holdingPositions > 0) {
+          console.log(`     Active Positions: ${holdingPositions}/${bot.config.maxActivePositions}`);
+        }
+      } catch (error: any) {
+        console.log(chalk.dim(`     ⚠ Could not fetch balances: ${error.message.slice(0, 30)}...`));
+      }
+      console.log();
     }
-    console.log();
   }
 }
 
