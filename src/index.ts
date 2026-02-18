@@ -2390,15 +2390,128 @@ async function reconfigureBot(storage: JsonStorage) {
   }
 
   if (action === 'regenerate') {
-    console.log(chalk.yellow('\n⚠️  Regenerating positions with balance preservation...\n'));
+    console.log(chalk.cyan('\n🔄 Regenerate Grid Positions\n'));
+
+    // Fetch current price from blockchain
+    console.log(chalk.dim('Fetching current token price...'));
+    let currentPrice = bot.currentPrice || 0;
+    
+    try {
+      // Show current price info
+      console.log(chalk.cyan(`\n📊 Current Market Data:`));
+      console.log(`  Token: ${bot.tokenSymbol}`);
+      console.log(`  Chain: ${bot.chain || 'base'}`);
+      
+      if (currentPrice > 0) {
+        console.log(`  Current Price: ${currentPrice.toExponential(6)} ETH (${currentPrice.toFixed(10)} ETH)`);
+      } else {
+        console.log(`  Current Price: ${chalk.yellow('Not available - will use auto-calculation')}`);
+      }
+      console.log();
+      
+    } catch (error: any) {
+      console.log(chalk.yellow(`Could not fetch current price: ${error.message}`));
+      console.log(chalk.dim('Using stored price or auto-calculation.\n'));
+    }
+
+    // Determine floor/ceiling options
+    const existingFloor = bot.config.floorPrice;
+    const existingCeiling = bot.config.ceilingPrice;
+    
+    console.log(chalk.cyan('📏 Price Range Configuration\n'));
+    
+    // Show current ranges if they exist
+    if (existingFloor && existingCeiling) {
+      console.log(`  Current Floor:    ${existingFloor.toExponential(6)} ETH`);
+      console.log(`  Current Ceiling:  ${existingCeiling.toExponential(6)} ETH`);
+      console.log();
+    }
+    
+    // Show auto-calculation preview
+    if (currentPrice > 0) {
+      const autoFloor = currentPrice / 10;
+      const autoCeiling = currentPrice * 4;
+      console.log(`  Auto Floor (1/10):   ${autoFloor.toExponential(6)} ETH`);
+      console.log(`  Auto Ceiling (4x):   ${autoCeiling.toExponential(6)} ETH`);
+      console.log();
+    }
+
+    const { rangeChoice } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'rangeChoice',
+        message: 'Choose price range:',
+        choices: [
+          ...(currentPrice > 0 ? [{ name: `🎯 Auto (Floor: ${(currentPrice / 10).toExponential(4)}, Ceiling: ${(currentPrice * 4).toExponential(4)})`, value: 'auto' }] : []),
+          ...(existingFloor && existingCeiling ? [{ name: `📍 Keep Existing (Floor: ${existingFloor.toExponential(4)}, Ceiling: ${existingCeiling.toExponential(4)})`, value: 'existing' }] : []),
+          { name: '✏️  Custom Floor/Ceiling', value: 'custom' },
+          { name: '⬅️  Back', value: 'back' },
+        ],
+      },
+    ]);
+
+    if (rangeChoice === 'back') {
+      console.log(chalk.dim('\nCancelled.\n'));
+      return;
+    }
+
+    let floorPrice: number | undefined;
+    let ceilingPrice: number | undefined;
+
+    if (rangeChoice === 'auto') {
+      if (currentPrice > 0) {
+        floorPrice = currentPrice / 10;
+        ceilingPrice = currentPrice * 4;
+        console.log(chalk.green(`\n✓ Using auto-calculated range:`));
+        console.log(`  Floor:   ${floorPrice.toExponential(6)} ETH`);
+        console.log(`  Ceiling: ${ceilingPrice.toExponential(6)} ETH`);
+      }
+    } else if (rangeChoice === 'existing') {
+      floorPrice = existingFloor;
+      ceilingPrice = existingCeiling;
+      console.log(chalk.green(`\n✓ Keeping existing range:`));
+      console.log(`  Floor:   ${floorPrice?.toExponential(6)} ETH`);
+      console.log(`  Ceiling: ${ceilingPrice?.toExponential(6)} ETH`);
+    } else if (rangeChoice === 'custom') {
+      const { floorInput, ceilingInput } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'floorInput',
+          message: `Enter floor price (in ETH):`,
+          default: currentPrice > 0 ? (currentPrice / 10).toExponential(4) : '0.000001',
+          validate: (input) => {
+            const val = parseFloat(input);
+            return (!isNaN(val) && val > 0) || 'Must be a positive number';
+          },
+        },
+        {
+          type: 'input',
+          name: 'ceilingInput',
+          message: `Enter ceiling price (in ETH):`,
+          default: currentPrice > 0 ? (currentPrice * 4).toExponential(4) : '0.00001',
+          validate: (input) => {
+            const val = parseFloat(input);
+            return (!isNaN(val) && val > 0) || 'Must be a positive number';
+          },
+        },
+      ]);
+      
+      floorPrice = parseFloat(floorInput);
+      ceilingPrice = parseFloat(ceilingInput);
+      
+      console.log(chalk.green(`\n✓ Using custom range:`));
+      console.log(`  Floor:   ${floorPrice.toExponential(6)} ETH`);
+      console.log(`  Ceiling: ${ceilingPrice.toExponential(6)} ETH`);
+    }
 
     // Store current holding positions
     const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING' && p.tokensReceived);
     
     if (holdingPositions.length > 0) {
-      console.log(chalk.cyan(`Found ${holdingPositions.length} positions with balances to preserve`));
+      console.log(chalk.cyan(`\n💼 Found ${holdingPositions.length} positions with balances to preserve:`));
       for (const pos of holdingPositions) {
-        console.log(`  Position ${pos.id}: ${pos.tokensReceived} tokens @ buy ${pos.buyPrice}, sell ${pos.sellPrice}`);
+        const tokens = pos.tokensReceived ? (Number(pos.tokensReceived) / 1e18).toFixed(4) : '0';
+        console.log(`  Position ${pos.id}: ${tokens} ${bot.tokenSymbol} @ buy ${pos.buyPrice.toExponential(4)}`);
       }
     }
 
@@ -2406,21 +2519,27 @@ async function reconfigureBot(storage: JsonStorage) {
       {
         type: 'confirm',
         name: 'confirm',
-        message: `Regenerate ${bot.config.numPositions} positions while preserving ${holdingPositions.length} balances?`,
+        message: `\nRegenerate ${bot.config.numPositions} positions with ${holdingPositions.length} balances preserved?`,
         default: false,
       },
     ]);
 
     if (!confirm) {
-      console.log(chalk.dim('Cancelled.\n'));
+      console.log(chalk.dim('\nCancelled.\n'));
       return;
     }
 
-    // Get current price (use stored or fetch)
-    const currentPrice = bot.currentPrice || 0.000001;
+    // Update config with new floor/ceiling
+    if (floorPrice !== undefined && ceilingPrice !== undefined) {
+      bot.config.floorPrice = floorPrice;
+      bot.config.ceilingPrice = ceilingPrice;
+    }
+
+    // Use current price for grid generation
+    const gridPrice = currentPrice > 0 ? currentPrice : (floorPrice || 0.000001);
     
     // Generate new grid
-    const newPositions = GridCalculator.generateGrid(currentPrice, bot.config);
+    const newPositions = GridCalculator.generateGrid(gridPrice, bot.config);
 
     // Merge holding positions into new grid
     if (holdingPositions.length > 0) {
@@ -2514,9 +2633,19 @@ async function reconfigureBot(storage: JsonStorage) {
     await storage.saveBot(bot);
 
     console.log(chalk.green('\n✓ Positions regenerated successfully'));
-    console.log(chalk.cyan(`  Total positions: ${newPositions.length}`));
-    console.log(chalk.cyan(`  Holding positions preserved: ${holdingPositions.length}`));
-    console.log(chalk.cyan(`  Empty positions: ${newPositions.filter(p => p.status === 'EMPTY').length}\n`));
+    console.log(chalk.cyan(`\n📊 New Grid Configuration:`));
+    console.log(`  Total positions: ${newPositions.length}`);
+    console.log(`  Price range: ${bot.config.floorPrice?.toExponential(6)} - ${bot.config.ceilingPrice?.toExponential(6)} ETH`);
+    console.log(`  Holding positions preserved: ${holdingPositions.length}`);
+    console.log(`  Empty positions: ${newPositions.filter(p => p.status === 'EMPTY').length}`);
+    
+    if (newPositions.length > 0) {
+      const firstPos = newPositions[0];
+      const lastPos = newPositions[newPositions.length - 1];
+      console.log(`  First position buy: ${firstPos.buyMin.toExponential(4)} - ${firstPos.buyMax.toExponential(4)} ETH`);
+      console.log(`  Last position buy: ${lastPos.buyMin.toExponential(4)} - ${lastPos.buyMax.toExponential(4)} ETH`);
+    }
+    console.log();
   }
 }
 
