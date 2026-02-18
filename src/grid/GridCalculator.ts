@@ -1,12 +1,32 @@
-// src/grid/GridCalculator.ts
+/**
+ * @fileoverview Grid calculation logic for the Base Grid Trading Bot
+ * @module grid/GridCalculator
+ * @version 1.4.0
+ */
 
 import { Position, GridConfig } from '../types/index.js';
 
+/**
+ * Calculates and manages grid trading positions
+ * @class GridCalculator
+ * @description Generates continuous price ranges for grid trading with no gaps
+ */
 export class GridCalculator {
   /**
    * Generate grid positions with continuous buy ranges
-   * Each position covers a range from buyMin to buyMax
-   * Ranges are continuous: position[i].buyMax = position[i+1].buyMin
+   * @static
+   * @param {number} currentPrice - Current token price in ETH
+   * @param {GridConfig} config - Grid configuration parameters
+   * @returns {Position[]} Array of positions with continuous coverage
+   * @description Each position covers [buyMin, buyMax] with no gaps between positions.
+   * The grid spans from floorPrice to ceilingPrice divided into numPositions segments.
+   * @example
+   * const positions = GridCalculator.generateGrid(0.0001, {
+   *   numPositions: 24,
+   *   floorPrice: 0.00001,
+   *   ceilingPrice: 0.0004,
+   *   takeProfitPercent: 8
+   * });
    */
   static generateGrid(
     currentPrice: number,
@@ -71,7 +91,13 @@ export class GridCalculator {
 
   /**
    * Find position that should buy at current price
-   * Price must be within the position's buy range [buyMin, buyMax]
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @param {number} currentPrice - Current token price
+   * @param {number} [tolerance] - Optional price tolerance buffer
+   * @returns {Position | null} Position to buy or null if no match
+   * @description Returns the first EMPTY position where currentPrice is within
+   * [buyMin, buyMax] range. Includes optional tolerance for floating point precision.
    */
   static findBuyPosition(
     positions: Position[],
@@ -96,7 +122,12 @@ export class GridCalculator {
 
   /**
    * Find all positions that should sell at current price
-   * Position sells when price reaches or exceeds sellPrice
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @param {number} currentPrice - Current token price
+   * @returns {Position[]} Array of positions ready to sell
+   * @description Returns all HOLDING positions where currentPrice >= sellPrice
+   * or currentPrice <= stopLossPrice (if stop loss enabled).
    */
   static findSellPositions(
     positions: Position[],
@@ -124,6 +155,12 @@ export class GridCalculator {
 
   /**
    * Find next buy opportunity (closest empty position above current price)
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @param {number} currentPrice - Current token price
+   * @returns {Position | null} Next buy opportunity or null
+   * @description Returns the EMPTY position with the lowest buyMin that is above currentPrice.
+   * Used for monitoring to show distance to next buy opportunity.
    */
   static findNextBuyOpportunity(
     positions: Position[],
@@ -138,6 +175,11 @@ export class GridCalculator {
 
   /**
    * Find next sell opportunity (lowest sell price among holding positions)
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @returns {Position | null} Position with lowest sell target or null
+   * @description Returns the HOLDING position with the lowest sellPrice.
+   * Used for monitoring to show the next expected sell.
    */
   static findNextSellOpportunity(
     positions: Position[]
@@ -151,6 +193,11 @@ export class GridCalculator {
 
   /**
    * Count active (holding) positions
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @returns {number} Count of positions with HOLDING status
+   * @description Returns the number of positions currently holding tokens.
+   * Used to enforce maxActivePositions limit.
    */
   static countActivePositions(positions: Position[]): number {
     return positions.filter(p => p.status === 'HOLDING').length;
@@ -158,6 +205,11 @@ export class GridCalculator {
 
   /**
    * Calculate position size for equal ETH distribution
+   * @static
+   * @param {string} totalEth - Total ETH amount in wei
+   * @param {number} numPositions - Number of positions to distribute across
+   * @returns {string} ETH amount per position in wei
+   * @description Divides total ETH equally among positions for auto-calculation.
    */
   static calculatePositionSize(
     totalEth: string,
@@ -170,6 +222,13 @@ export class GridCalculator {
 
   /**
    * Format price for display
+   * @static
+   * @param {number} price - Price value to format
+   * @returns {string} Formatted price string
+   * @description Formats price based on magnitude:
+   * - < 0.0001: Exponential notation (4 decimals)
+   * - < 1: Fixed 6 decimals
+   * - >= 1: Fixed 4 decimals
    */
   static formatPrice(price: number): string {
     if (price < 0.0001) return price.toExponential(4);
@@ -179,6 +238,10 @@ export class GridCalculator {
 
   /**
    * Format price range for display
+   * @static
+   * @param {number} min - Minimum price
+   * @param {number} max - Maximum price
+   * @returns {string} Formatted range string (e.g., "0.0001 - 0.0002")
    */
   static formatPriceRange(min: number, max: number): string {
     return `${this.formatPrice(min)} - ${this.formatPrice(max)}`;
@@ -186,6 +249,15 @@ export class GridCalculator {
 
   /**
    * Calculate grid statistics
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @returns {Object} Grid statistics object
+   * @returns {number} returns.total - Total positions
+   * @returns {number} returns.holding - Count of HOLDING positions
+   * @returns {number} returns.sold - Count of SOLD positions
+   * @returns {number} returns.empty - Count of EMPTY positions
+   * @returns {number} returns.avgProfit - Average profit percentage
+   * @returns {string} returns.totalProfitEth - Total profit in ETH (wei string)
    */
   static calculateGridStats(positions: Position[]) {
     const holding = positions.filter(p => p.status === 'HOLDING');
@@ -206,6 +278,11 @@ export class GridCalculator {
 
   /**
    * Validate that grid has continuous coverage (no gaps)
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @returns {boolean} True if positions are continuous (no gaps)
+   * @description Checks that position[i].buyMax equals position[i+1].buyMin
+   * within a small tolerance for floating point precision.
    */
   static validateContinuousCoverage(positions: Position[]): boolean {
     if (positions.length < 2) return true;
@@ -229,6 +306,11 @@ export class GridCalculator {
 
   /**
    * Get the price range covered by the grid
+   * @static
+   * @param {Position[]} positions - Array of grid positions
+   * @returns {{floor: number, ceiling: number} | null} Grid range or null if empty
+   * @description Returns the floor (lowest buyMin) and ceiling (highest buyMax)
+   * covered by the grid positions.
    */
   static getGridRange(positions: Position[]): { floor: number; ceiling: number } | null {
     if (positions.length === 0) return null;

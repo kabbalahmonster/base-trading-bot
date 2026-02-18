@@ -2,12 +2,18 @@
 
 import { generatePrivateKey, privateKeyToAccount, Account } from 'viem/accounts';
 import { createWalletClient, http, publicActions } from 'viem';
-import { base } from 'viem/chains';
+import { base, mainnet } from 'viem/chains';
 import CryptoJS from 'crypto-js';
-import { WalletData, WalletDictionary } from '../types/index.js';
+import { WalletData, WalletDictionary, Chain } from '../types/index.js';
 
 const PBKDF2_ITERATIONS = 600000;
 const SALT_LENGTH = 32;
+
+// Chain configuration
+const CHAIN_CONFIG: Record<Chain, typeof base | typeof mainnet> = {
+  base,
+  ethereum: mainnet,
+};
 
 export class WalletManager {
   private walletDictionary: WalletDictionary = {};
@@ -183,13 +189,14 @@ export class WalletManager {
   }
 
   /**
-   * Get wallet client for any wallet
+   * Get wallet client for any wallet with specified chain
    */
-  getWalletClient(walletId: string, rpcUrl: string) {
+  getWalletClient(walletId: string, rpcUrl: string, chain: Chain = 'base') {
     const account = this.getAccount(walletId);
+    const chainConfig = CHAIN_CONFIG[chain];
     return createWalletClient({
       account,
-      chain: base,
+      chain: chainConfig,
       transport: http(rpcUrl),
     }).extend(publicActions);
   }
@@ -197,20 +204,21 @@ export class WalletManager {
   /**
    * Get wallet client for primary wallet (backward compatibility)
    */
-  getMainWalletClient(rpcUrl: string) {
+  getMainWalletClient(rpcUrl: string, chain: Chain = 'base') {
     const account = this.getMainAccount();
+    const chainConfig = CHAIN_CONFIG[chain];
     return createWalletClient({
       account,
-      chain: base,
+      chain: chainConfig,
       transport: http(rpcUrl),
     }).extend(publicActions);
   }
 
   /**
-   * Get wallet client for bot wallet (legacy)
+   * Get wallet client for bot wallet with chain support
    */
-  getBotWalletClient(botId: string, rpcUrl: string) {
-    return this.getWalletClient(botId, rpcUrl);
+  getBotWalletClient(botId: string, rpcUrl: string, chain: Chain = 'base') {
+    return this.getWalletClient(botId, rpcUrl, chain);
   }
 
   /**

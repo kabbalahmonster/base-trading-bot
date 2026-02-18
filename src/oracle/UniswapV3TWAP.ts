@@ -1,7 +1,8 @@
 // src/oracle/UniswapV3TWAP.ts
-// Uniswap V3 Time-Weighted Average Price (TWAP) implementation for Base mainnet
+// Uniswap V3 Time-Weighted Average Price (TWAP) implementation for Base and Ethereum
 
 import { parseAbi } from 'viem';
+import { Chain } from '../types/index.js';
 
 // Uniswap V3 Pool ABI (minimal for TWAP)
 const POOL_ABI = parseAbi([
@@ -16,8 +17,11 @@ const FACTORY_ABI = parseAbi([
   'function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool)',
 ]);
 
-// Uniswap V3 Factory on Base mainnet
-const UNISWAP_V3_FACTORY = '0x33128a8fC17869897dcE68Ed026d694621f6FDfD';
+// Uniswap V3 Factory addresses by chain
+const UNISWAP_V3_FACTORY: Record<Chain, string> = {
+  base: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
+  ethereum: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
+};
 
 // Common fee tiers
 export const FEE_TIERS = [100, 500, 3000, 10000]; // 0.01%, 0.05%, 0.3%, 1%
@@ -25,10 +29,20 @@ export const FEE_TIERS = [100, 500, 3000, 10000]; // 0.01%, 0.05%, 0.3%, 1%
 // Default TWAP window in seconds (30 minutes)
 export const DEFAULT_TWAP_SECONDS = 30 * 60;
 
-// WETH address on Base
-const WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
+// WETH address by chain
+const WETH_ADDRESS: Record<Chain, string> = {
+  base: '0x4200000000000000000000000000000000000006',
+  ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+};
+
+// USDC address by chain (for health checks)
+const USDC_ADDRESS: Record<Chain, string> = {
+  base: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  ethereum: '0xA0b86a33E6441E6C7D3D4B4f6b8e8F5c4D3e2B1A',
+};
 
 export interface TWAPConfig {
+  chain?: Chain;             // Chain selection
   twapSeconds?: number;      // Default: 30 minutes
   maxObservationAge?: number; // Default: 2 hours (in seconds)
 }
@@ -55,13 +69,44 @@ export interface PoolInfo {
 export class UniswapV3TWAP {
   private publicClient: any;
   private config: Required<TWAPConfig>;
+  private chain: Chain;
+  private factoryAddress: string;
+  private wethAddress: string;
 
   constructor(publicClient: any, config: TWAPConfig = {}) {
     this.publicClient = publicClient;
+    this.chain = config.chain ?? 'base';
     this.config = {
+      chain: this.chain,
       twapSeconds: config.twapSeconds ?? DEFAULT_TWAP_SECONDS,
       maxObservationAge: config.maxObservationAge ?? 2 * 60 * 60, // 2 hours
     };
+    this.factoryAddress = UNISWAP_V3_FACTORY[this.chain];
+    this.wethAddress = WETH_ADDRESS[this.chain];
+  }
+
+  /**
+   * Get the current chain
+   */
+  getChain(): Chain {
+    return this.chain;
+  }
+
+  /**
+   * Set the chain for pool lookups
+   */
+  setChain(chain: Chain): void {
+    this.chain = chain;
+    this.config.chain = chain;
+    this.factoryAddress = UNISWAP_V3_FACTORY[chain];
+    this.wethAddress = WETH_ADDRESS[chain];
+  }
+
+  /**
+   * Get WETH address for current chain
+   */
+  getWethAddress(): string {
+    return this.wethAddress;
   }
 
   /**
@@ -79,7 +124,7 @@ export class UniswapV3TWAP {
     for (const fee of FEE_TIERS) {
       try {
         const poolAddress = await this.publicClient.readContract({
-          address: UNISWAP_V3_FACTORY as `0x${string}`,
+          address: this.factoryAddress as `0x${string}`,
           abi: FACTORY_ABI,
           functionName: 'getPool',
           args: [tokenA as `0x${string}`, tokenB as `0x${string}`, fee],
@@ -294,7 +339,7 @@ export class UniswapV3TWAP {
   ): Promise<TWAPResult | null> {
     return this.getTWAPForPair(
       tokenAddress,
-      WETH_ADDRESS,
+      this.wethAddress,
       secondsAgo,
       tokenDecimals,
       18 // WETH decimals
@@ -307,7 +352,7 @@ export class UniswapV3TWAP {
    */
   async getPrice(
     tokenAddress: string,
-    quoteTokenAddress: string = WETH_ADDRESS,
+    quoteTokenAddress: string = this.wethAddress,
     secondsAgo?: number,
     tokenDecimals: number = 18,
     quoteDecimals: number = 18
@@ -391,5 +436,12 @@ export class UniswapV3TWAP {
       console.error(`Error fetching observation:`, error.message);
       return null;
     }
+  }
+
+  /**
+   * Get USDC address for current chain (for health checks)
+   */
+  getUsdcAddress(): string {
+    return USDC_ADDRESS[this.chain];
   }
 }

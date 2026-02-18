@@ -1,8 +1,12 @@
-// src/bot/TradingBot.ts
+/**
+ * @fileoverview Core trading bot implementation for the Base Grid Trading Bot
+ * @module bot/TradingBot
+ * @version 1.4.0
+ */
 
 import { WalletClient, formatEther, parseEther, createPublicClient, http, erc20Abi } from 'viem';
-import { base } from 'viem/chains';
-import { BotInstance, Position, TradeResult } from '../types/index.js';
+import { base, mainnet } from 'viem/chains';
+import { BotInstance, Position, TradeResult, Chain } from '../types/index.js';
 import { WalletManager } from '../wallet/WalletManager.js';
 import { ZeroXApi } from '../api/ZeroXApi.js';
 import { GridCalculator } from '../grid/GridCalculator.js';
@@ -11,8 +15,20 @@ import { PriceOracle, PriceData, ValidationResult } from '../oracle/index.js';
 import { PnLTracker } from '../analytics/PnLTracker.js';
 import { NotificationService } from '../notifications/NotificationService.js';
 
-// Price discovery via 0x API and Price Oracle (Chainlink + Uniswap V3 TWAP)
+/**
+ * Chain configuration mapping
+ * @constant {Record<Chain, typeof base | typeof mainnet>}
+ */
+const CHAIN_CONFIG: Record<Chain, typeof base | typeof mainnet> = {
+  base,
+  ethereum: mainnet,
+};
 
+/**
+ * Core trading engine that executes grid strategies
+ * @class TradingBot
+ * @description Manages price monitoring, trade execution, and state for a single bot instance
+ */
 export class TradingBot {
   private instance: BotInstance;
   private walletManager: WalletManager;
@@ -33,7 +49,23 @@ export class TradingBot {
   private lastOraclePrice: PriceData | null = null;
   private oracleValidationEnabled: boolean = true;
   private minPriceConfidence: number = 0.8; // 80% minimum confidence
+  
+  // Chain
+  private chain: Chain;
 
+  /**
+   * Creates a new TradingBot instance
+   * @constructor
+   * @param {BotInstance} instance - Bot configuration and state
+   * @param {WalletManager} walletManager - Wallet management instance
+   * @param {ZeroXApi} zeroXApi - 0x API client
+   * @param {JsonStorage} storage - Storage instance for persistence
+   * @param {string} rpcUrl - RPC endpoint URL
+   * @param {boolean} [enablePriceOracle=true] - Enable price oracle validation
+   * @param {PnLTracker} [pnLTracker] - Optional P&L tracker
+   * @description Initializes a trading bot with all required dependencies.
+   * The bot will use the chain specified in the instance configuration.
+   */
   constructor(
     instance: BotInstance,
     walletManager: WalletManager,
@@ -48,10 +80,22 @@ export class TradingBot {
     this.zeroXApi = zeroXApi;
     this.storage = storage;
     this.rpcUrl = rpcUrl;
+    this.chain = instance.chain ?? 'base';
+    this.pnLTracker = pnLTracker || null;
     // Use config setting if provided, otherwise fall back to parameter
     this.oracleValidationEnabled = instance.config.usePriceOracle !== undefined ? instance.config.usePriceOracle : enablePriceOracle;
     this.minPriceConfidence = instance.config.minPriceConfidence ?? 0.8;
-    this.pnLTracker = pnLTracker || null;
+    
+    // Update 0x API chain to match bot chain
+    this.zeroXApi.setChain(this.chain);
+  }
+
+  /**
+   * Get the chain for this bot
+   * @returns {Chain} The chain this bot is trading on ('base' | 'ethereum')
+   */
+  getChain(): Chain {
+    return this.chain;
   }
 
   /**
@@ -72,15 +116,18 @@ export class TradingBot {
    * Initialize the bot
    */
   async init(): Promise<void> {
+    const chainConfig = CHAIN_CONFIG[this.chain];
+    
     // Create public client for reading
     this.publicClient = createPublicClient({
-      chain: base,
+      chain: chainConfig,
       transport: http(this.rpcUrl),
     });
 
     // Initialize Price Oracle if enabled
     if (this.oracleValidationEnabled) {
       this.priceOracle = new PriceOracle({
+        chain: this.chain,
         rpcUrl: this.rpcUrl,
         minConfidence: this.minPriceConfidence,
         allowFallback: true,
@@ -98,10 +145,11 @@ export class TradingBot {
     }
 
     // Get wallet client - extends publicActions for waitForTransactionReceipt
+    const chain = this.chain;
     if (this.instance.useMainWallet) {
-      this.walletClient = this.walletManager.getMainWalletClient(this.rpcUrl) as WalletClient & { waitForTransactionReceipt: any };
+      this.walletClient = this.walletManager.getMainWalletClient(this.rpcUrl, chain) as WalletClient & { waitForTransactionReceipt: any };
     } else {
-      this.walletClient = this.walletManager.getBotWalletClient(this.instance.id, this.rpcUrl) as WalletClient & { waitForTransactionReceipt: any };
+      this.walletClient = this.walletManager.getBotWalletClient(this.instance.id, this.rpcUrl, chain) as WalletClient & { waitForTransactionReceipt: any };
     }
 
     // Initialize positions if empty
@@ -716,6 +764,7 @@ export class TradingBot {
    */
   getStats(): {
     name: string;
+    chain: Chain;
     positions: { empty: number; holding: number; sold: number };
     totalBuys: number;
     totalSells: number;
@@ -726,6 +775,7 @@ export class TradingBot {
     const positions = this.instance.positions;
     return {
       name: this.instance.name,
+      chain: this.chain,
       positions: {
         empty: positions.filter(p => p.status === 'EMPTY').length,
         holding: positions.filter(p => p.status === 'HOLDING').length,

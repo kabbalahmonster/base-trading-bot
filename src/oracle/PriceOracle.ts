@@ -3,13 +3,23 @@
 // Provides reliable price data with confidence scoring and fallback mechanisms
 
 import { createPublicClient, http } from 'viem';
-import { base } from 'viem/chains';
+import { base, mainnet } from 'viem/chains';
 import { ChainlinkFeed, ChainlinkPriceData } from './ChainlinkFeed.js';
 import { UniswapV3TWAP, TWAPResult, DEFAULT_TWAP_SECONDS } from './UniswapV3TWAP.js';
+import { Chain } from '../types/index.js';
 
 export type Currency = 'USD' | 'CAD' | 'ETH';
 
+// Chain configuration
+const CHAIN_CONFIG: Record<Chain, typeof base | typeof mainnet> = {
+  base,
+  ethereum: mainnet,
+};
+
 export interface PriceOracleConfig {
+  // Chain selection
+  chain?: Chain;                 // Default: 'base'
+  
   // RPC configuration
   rpcUrl?: string;
 
@@ -60,10 +70,13 @@ export class PriceOracle {
   private chainlink: ChainlinkFeed;
   private uniswap: UniswapV3TWAP;
   private config: Required<PriceOracleConfig>;
+  private chain: Chain;
 
   constructor(config: PriceOracleConfig = {}) {
+    this.chain = config.chain ?? 'base';
     this.config = {
-      rpcUrl: config.rpcUrl ?? 'https://mainnet.base.org',
+      chain: this.chain,
+      rpcUrl: config.rpcUrl ?? (this.chain === 'base' ? 'https://mainnet.base.org' : 'https://eth.llamarpc.com'),
       preferChainlink: config.preferChainlink ?? true,
       preferTWAP: config.preferTWAP ?? false,
       currency: config.currency ?? 'USD',
@@ -75,18 +88,56 @@ export class PriceOracle {
     };
 
     // Initialize public client
+    const chainConfig = CHAIN_CONFIG[this.chain];
     this.publicClient = createPublicClient({
-      chain: base,
+      chain: chainConfig,
       transport: http(this.config.rpcUrl),
     });
 
     // Initialize price feed modules
     this.chainlink = new ChainlinkFeed(this.publicClient, {
+      chain: this.chain,
       stalePriceThresholdMs: this.config.chainlinkStaleThresholdMs,
       minConfidence: this.config.minConfidence,
     });
 
     this.uniswap = new UniswapV3TWAP(this.publicClient, {
+      chain: this.chain,
+      twapSeconds: this.config.twapSeconds,
+    });
+  }
+
+  /**
+   * Get the current chain
+   */
+  getChain(): Chain {
+    return this.chain;
+  }
+
+  /**
+   * Set the chain for the oracle
+   */
+  setChain(chain: Chain, rpcUrl?: string): void {
+    this.chain = chain;
+    this.config.chain = chain;
+    this.config.rpcUrl = rpcUrl ?? (chain === 'base' ? 'https://mainnet.base.org' : 'https://eth.llamarpc.com');
+    
+    // Re-initialize clients
+    const chainConfig = CHAIN_CONFIG[chain];
+    this.publicClient = createPublicClient({
+      chain: chainConfig,
+      transport: http(this.config.rpcUrl),
+    });
+
+    // Re-initialize modules with new chain
+    this.chainlink = new ChainlinkFeed(this.publicClient, {
+      chain: chain,
+      stalePriceThresholdMs: this.config.chainlinkStaleThresholdMs,
+      minConfidence: this.config.minConfidence,
+    });
+
+    this.uniswap = new UniswapV3TWAP(this.publicClient, {
+      chain: chain,
       twapSeconds: this.config.twapSeconds,
     });
   }
@@ -400,9 +451,16 @@ export class PriceOracle {
   updateConfig(newConfig: Partial<PriceOracleConfig>): void {
     this.config = { ...this.config, ...newConfig };
     
+    // Handle chain change
+    if (newConfig.chain && newConfig.chain !== this.chain) {
+      this.setChain(newConfig.chain, newConfig.rpcUrl);
+      return;
+    }
+    
     // Re-initialize modules if needed
     if (newConfig.chainlinkStaleThresholdMs || newConfig.minConfidence) {
       this.chainlink = new ChainlinkFeed(this.publicClient, {
+        chain: this.chain,
         stalePriceThresholdMs: this.config.chainlinkStaleThresholdMs,
         minConfidence: this.config.minConfidence,
       });
@@ -410,6 +468,7 @@ export class PriceOracle {
 
     if (newConfig.twapSeconds) {
       this.uniswap = new UniswapV3TWAP(this.publicClient, {
+        chain: this.chain,
         twapSeconds: this.config.twapSeconds,
       });
     }
@@ -437,7 +496,7 @@ export class PriceOracle {
       
       // Check Uniswap with USDC/WETH pair (more reliable than WETH/WETH)
       // Use a common token that has good liquidity
-      const USDC_ADDRESS = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+      const USDC_ADDRESS = this.uniswap.getUsdcAddress();
       let twapResult = null;
       try {
         twapResult = await this.uniswap.getTokenPriceInETH(USDC_ADDRESS, 60);

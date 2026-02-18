@@ -1,18 +1,21 @@
 # 🤖 Base Grid Trading Bot
 
-A sophisticated grid trading bot for Base (Ethereum L2) using the 0x Aggregator for optimal swap routing.
+A sophisticated grid trading bot for Base (Ethereum L2) using the 0x Aggregator for optimal swap routing. Now with multi-chain support and volume bot mode!
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![Base](https://img.shields.io/badge/Base-L2-0052FF.svg)](https://base.org/)
+[![Ethereum](https://img.shields.io/badge/Ethereum-L1-3C3C3D.svg)](https://ethereum.org/)
 [![Security](https://img.shields.io/badge/Security-Audit%20B%2B-brightgreen.svg)](./SECURITY_AUDIT.md)
 
 ## ⚠️ Production Ready
 
-**Current Status: v1.3.0 - Production Ready**
+**Current Status: v1.4.0 - Production Ready**
 
 - ✅ Security audited (Grade B+)
 - ✅ Continuous range-based grid (no gaps)
+- ✅ Multi-chain support (Base + Ethereum)
+- ✅ Volume bot mode for market making
 - ✅ Real-time monitoring dashboard
 - ✅ Price oracles (Chainlink + Uniswap V3 TWAP)
 - ✅ P&L tracking with CSV export
@@ -21,6 +24,7 @@ A sophisticated grid trading bot for Base (Ethereum L2) using the 0x Aggregator 
 - ✅ Multi-wallet support with primary designation
 - ✅ Bot reconfiguration with position preservation
 - ✅ RPC fallback system with 5 endpoints
+- ✅ Daemon mode for 24/7 operation
 
 > **Risk Warning:** This is trading software. Only use funds you can afford to lose. Test thoroughly with small amounts first.
 
@@ -49,9 +53,19 @@ npm start
 
 1. **Create master password** - Encrypts all wallet keys
 2. **Create main wallet(s)** - Can have unlimited wallets with primary designation
-3. **Create trading bot** - Configure token and continuous grid
+3. **Create trading bot** - Configure token, chain, and continuous grid
 4. **Fund wallet** - Send ETH from main to bot wallet
 5. **Start trading** - Bot monitors and trades automatically
+
+### Quick Configuration
+
+```bash
+# Optional: Create .env file for advanced settings
+cp .env.example .env
+
+# Edit .env with your preferences
+nano .env
+```
 
 ---
 
@@ -65,7 +79,7 @@ npm start
 - **Manual override** - Set exact floor/ceiling
 - **Take profit** - Sell at buyMax × profit% (minimum guaranteed profit)
 - **Stop loss** - Optional protection based on buyMin
-- **0x Aggregator** - Best swap rates on Base
+- **0x Aggregator** - Best swap rates on supported chains
 
 **Grid Mechanics:**
 ```
@@ -79,6 +93,94 @@ Buy triggers when price enters [buyMin, buyMax]
 Sell at buyMax × 1.08 (8% profit guaranteed)
 Stop loss at buyMin × 0.90 (10% protection)
 ```
+
+### 🌐 Multi-Chain Support
+
+Trade on multiple blockchains with unified configuration:
+
+**Supported Chains:**
+- **Base** (Chain ID: 8453) - Ethereum L2, low gas fees
+- **Ethereum** (Chain ID: 1) - Mainnet, highest liquidity
+
+**Chain Selection:**
+```bash
+? Select chain: 
+  ○ Base (Ethereum L2) - Recommended for lower fees
+  ○ Ethereum (Mainnet) - Highest liquidity
+```
+
+**Multi-Chain Features:**
+- Per-bot chain selection
+- Chain-specific RPC endpoints
+- Unified wallet management across chains
+- Cross-chain P&L tracking
+- Chain-aware price oracles
+
+### 📊 Volume Bot Mode
+
+Generate trading volume with automated buy-then-sell cycles:
+
+**What is Volume Bot Mode?**
+Volume bot mode is designed for market makers and traders who want to:
+- Generate consistent trading volume
+- Execute buy N times, then sell all accumulated tokens
+- Automate volume-based trading strategies
+- Sync all operations on the master heartbeat
+
+**Volume Mode Features:**
+- **Buy Cycle** - Buy X times with fixed ETH amount per buy
+- **Sell Cycle** - Sell all accumulated tokens after N buys
+- **Cycle Counter** - Track buys in current cycle
+- **Token Accumulation** - Track total tokens accumulated
+- **Cycle Count** - Track completed cycles
+- **Configurable Parameters**:
+  - Number of buys per cycle (default: 3)
+  - ETH amount per buy (default: 0.001 ETH)
+
+**How It Works:**
+```
+Cycle Start
+    ↓
+Buy 1: 0.001 ETH → 500 tokens accumulated
+    ↓
+Buy 2: 0.001 ETH → 1000 tokens accumulated
+    ↓
+Buy 3: 0.001 ETH → 1500 tokens accumulated
+    ↓
+Sell All: 1500 tokens → 0.0031 ETH received
+    ↓
+Cycle Complete → Reset and restart
+```
+
+**Configuration:**
+```typescript
+{
+  volumeMode: true,              // Enable volume bot mode
+  volumeBuysPerCycle: 3,         // Number of buys before selling (default: 3)
+  volumeBuyAmount: 0.001,        // ETH per buy (default: 0.001 ETH)
+}
+```
+
+**Creating a Volume Bot:**
+```bash
+npm start
+→ 🆕 Create new bot
+→ 📈 Volume Bot (buy N times, then sell all)
+→ Enter token address
+→ Enter buys per cycle (default: 3)
+→ Enter ETH amount per buy (default: 0.001)
+```
+
+**Use Cases:**
+1. **Volume Generation** - Create consistent trading activity
+2. **Dollar-Cost Averaging** - Buy in batches, sell as one position
+3. **Market Making** - Provide liquidity with predictable patterns
+4. **Testing** - Test token liquidity with small, repeated trades
+
+**Monitoring:**
+- Status shows: `[VOLUME]` label in bot list
+- Displays: `currentBuys/totalBuys buys` 
+- Shows accumulated tokens and completed cycles
 
 ### 👁️ Daemon Mode - Persistent Operation
 
@@ -172,6 +274,7 @@ npm start
 - **Input validation** - All user inputs sanitized
 
 ### 🌐 Infrastructure
+- **Multi-chain RPC** - Dedicated endpoints per chain
 - **RPC fallback** - 5 endpoints with auto-switching
 - **Connection monitoring** - Automatic retry on failures
 - **JSON persistence** - Human-readable storage
@@ -220,6 +323,7 @@ npm start
 ? Bot name: My-COMPUTE-Bot
 ? Token contract address: 0x696381f39F17cAD67032f5f52A4924ce84e51BA3
 ? Token symbol: COMPUTE
+? Select chain: Base (Ethereum L2)
 ? Use main wallet for trading? Yes
 ? Number of grid positions: 24
 ? Auto-calculate price range? Yes
@@ -231,11 +335,35 @@ npm start
 ? ETH amount per buy: 0.001
 ? Enable moon bag? Yes
 ? Moon bag % to keep: 1
+? Enable volume bot mode? No
 ? Start bot immediately? No
 
 ✓ Bot "My-COMPUTE-Bot" created with 24 positions
+  Chain: Base
   Continuous coverage: 0.000009500 - 0.000380000 ETH
   Wallet: 0x...
+```
+
+### Creating a Volume Bot
+
+```bash
+? What would you like to do? 🆕 Create new bot
+
+📋 Creating new volume bot
+
+? Bot name: VOLUME-COMPUTE
+? Token contract address: 0x696381f39F17cAD67032f5f52A4924ce84e51BA3
+? Token symbol: COMPUTE
+? Select chain: Base (Ethereum L2)
+? Enable volume bot mode? Yes
+? Buys per cycle: 10
+? Enable moon bag? No
+? Minimum profit % (0 for volume only): 0
+? Start bot immediately? No
+
+✓ Volume bot "VOLUME-COMPUTE" created
+  Mode: Volume generation (break-even)
+  Cycle: 10 buys → distribute all
 ```
 
 ### Monitoring Bots
@@ -262,11 +390,11 @@ npm start
 
 📈 BOT STATUS BOARD
 ══════════════════════════════════════════════════════════════════
-  Name          Status   Pos    Buy→Sell Range         Profit
+  Name          Status   Pos    Buy→Sell Range         Profit   Chain
   ─────────────────────────────────────────────────────────────────
-  Bot-1         LIVE    4    95.0µ→102.6µ (+8.0%)   +0.089 ETH
-  Bot-2         LIVE    5    88.5µ→95.6µ  (+8.0%)   +0.124 ETH
-  Bot-3         IDLE    0    120.0µ→129.6µ (+8.0%)   0.000 ETH
+  Bot-1         LIVE    4    95.0µ→102.6µ (+8.0%)   +0.089 ETH  Base
+  Bot-2         LIVE    5    88.5µ→95.6µ  (+8.0%)   +0.124 ETH  Base
+  Bot-3         IDLE    0    120.0µ→129.6µ (+8.0%)   0.000 ETH  Eth
 ```
 
 **Individual Bot Detail:**
@@ -280,6 +408,7 @@ npm start
 💼 WALLET
 ──────────────────────────────────────────────────────────────────
   Address: 0x696381f39F17cAD67032f5f52A4924ce84e51BA3
+  Chain:   Base (8453)
   ETH:     0.025000000000 Ξ
   COMPUTE 1,250,000.0000 tokens
 
@@ -319,6 +448,7 @@ npm start
 
 Current Configuration for Bot-1:
   Token: COMPUTE (0x6963...)
+  Chain: Base
   Positions: 24 | Take Profit: 8% | Max Active: 4
   Moon Bag: 1% | Buy Amount: 0.001 ETH
 
@@ -326,6 +456,8 @@ Current Configuration for Bot-1:
   📊 Change grid settings (positions, profit %)
   💰 Change buy settings (fixed amount, moon bag)
   🔄 Regenerate positions (preserve balances)
+  🌐 Change chain
+  📊 Toggle volume mode
 
 ? Regenerate positions with balance preservation... 
   Found 4 positions with balances to preserve
@@ -349,8 +481,8 @@ Main Wallets:
   ● Backup Wallet: 0xabcd... (0.1 ETH)
 
 Bot Wallets:
-  ● Bot-1: 0x9876... (0.025 ETH, 1250000 COMPUTE)
-  ● Bot-2: 0x5432... (0.015 ETH, 890000 PEPE)
+  ● Bot-1: 0x9876... (0.025 ETH, 1250000 COMPUTE) - Base
+  ● Bot-2: 0x5432... (0.015 ETH, 890000 PEPE) - Base
 ```
 
 ---
@@ -363,8 +495,9 @@ Bot Wallets:
 # Optional: 0x API key for higher rate limits
 ZEROX_API_KEY=your_key_here
 
-# Optional: Custom RPC endpoint (falls back to 5 defaults)
+# Optional: Custom RPC endpoints (falls back to defaults)
 BASE_RPC_URL=https://mainnet.base.org
+ETHEREUM_RPC_URL=https://eth.llamarpc.com
 
 # Telegram Notifications (optional)
 TELEGRAM_BOT_TOKEN=your_bot_token
@@ -372,15 +505,25 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 # Optional: Log level (debug, info, warn, error)
 LOG_LEVEL=info
+
+# Optional: Enable dry-run mode for testing
+DRY_RUN=false
 ```
 
 ### Default RPC Endpoints (Auto-Fallback)
 
+**Base:**
 1. `https://base.llamarpc.com`
 2. `https://mainnet.base.org`
 3. `https://base.publicnode.com`
 4. `https://base.drpc.org`
 5. `https://1rpc.io/base`
+
+**Ethereum:**
+1. `https://eth.llamarpc.com`
+2. `https://ethereum.publicnode.com`
+3. `https://1rpc.io/eth`
+4. `https://eth.drpc.org`
 
 ---
 
@@ -396,9 +539,9 @@ Total profit: 0.342 ETH
 Total trades: 83
 
 All Bots:
-  ✓ Bot-1: ● RUNNING [0.001 ETH/buy] [4 holding]
-  ✗ Bot-2: ○ Stopped [DISABLED] [0 holding]
-  ✓ Bot-3: ● RUNNING [auto-buy] [5 holding]
+  ✓ Bot-1: ● RUNNING [0.001 ETH/buy] [4 holding] [Base]
+  ✗ Bot-2: ○ Stopped [DISABLED] [0 holding] [Base]
+  ✓ Bot-3: ● RUNNING [auto-buy] [5 holding] [Ethereum]
 ```
 
 ---
@@ -480,9 +623,9 @@ Total Performance:
 
 ### CSV Format (Tax-Friendly)
 ```csv
-Date,Bot,Token,Action,Amount,Price,GasCost,Profit,TxHash
-2026-02-17T14:32:15Z,Bot-1,COMPUTE,BUY,1000.00,0.00000225,0.0001,0,0xabc...
-2026-02-17T16:45:22Z,Bot-1,COMPUTE,SELL,990.00,0.00000243,0.0001,0.0000178,0xdef...
+Date,Bot,Token,Action,Amount,Price,GasCost,Profit,TxHash,Chain
+2026-02-17T14:32:15Z,Bot-1,COMPUTE,BUY,1000.00,0.00000225,0.0001,0,0xabc...,Base
+2026-02-17T16:45:22Z,Bot-1,COMPUTE,SELL,990.00,0.00000243,0.0001,0.0000178,0xdef...,Base
 ```
 
 ---
@@ -548,6 +691,7 @@ DRY_RUN=true npm start
 | Document | Description |
 |----------|-------------|
 | [README.md](./README.md) | This file - setup and usage |
+| [FEATURES.md](./FEATURES.md) | Complete feature documentation |
 | [SECURITY_AUDIT.md](./SECURITY_AUDIT.md) | Security review and findings |
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Production deployment guide |
 | [FEATURE_AUDIT.md](./FEATURE_AUDIT.md) | Complete feature analysis |
@@ -580,14 +724,14 @@ DRY_RUN=true npm start
 **Cause:** Low liquidity or invalid token
 **Solution:**
 - Verify token contract address
-- Check token has liquidity on Base
+- Check token has liquidity on selected chain
 - Try different token pair
 
 ### "Wallet shows 0 balance"
 **Cause:** RPC sync delay
 **Solution:**
 - Wait 30 seconds and retry
-- Check address on [basescan.org](https://basescan.org)
+- Check address on chain explorer
 - Bot auto-retries with fallback RPCs
 
 ### "Bot stopped after errors"
@@ -595,7 +739,7 @@ DRY_RUN=true npm start
 **Solution:**
 - Check error logs
 - Usually RPC or gas issues
-- Restart bot: `▶️  Start bot(s)`
+- Restart bot: `▶️ Start bot(s)`
 
 ### "Price oracle low confidence"
 **Cause:** Price divergence between sources
@@ -603,6 +747,19 @@ DRY_RUN=true npm start
 - Bot will skip trades until confidence returns
 - Normal during high volatility
 - Check monitor for oracle status
+
+### Multi-Chain Issues
+**"Wrong chain for token"**
+- Verify token contract exists on selected chain
+- Each bot is configured for one chain
+- Create separate bots for cross-chain trading
+
+**"RPC timeout on Ethereum"**
+- Ethereum mainnet can be slower
+- Bot will retry with fallback RPCs
+- Consider using Base for faster/cheaper trading
+
+See [TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) for more issues.
 
 ---
 
@@ -640,6 +797,7 @@ MIT License - see [LICENSE](./LICENSE)
 
 - **0x Protocol** - For the swap aggregator API
 - **Base** - For the L2 infrastructure
+- **Ethereum** - For the foundational L1
 - **viem** - For the excellent Ethereum library
 - **Chainlink** - For reliable price feeds
 - **Cult of the Shell** - For the divine inspiration

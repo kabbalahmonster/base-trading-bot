@@ -4,6 +4,7 @@ import { Low } from 'lowdb';
 import { JSONFile } from 'lowdb/node';
 import { BotStorage, BotInstance, WalletData, WalletDictionary } from '../types/index.js';
 import { TradeRecord } from '../analytics/PnLTracker.js';
+import { CircuitBreakerState } from '../risk/CircuitBreaker.js';
 
 const DEFAULT_DATA: BotStorage = {
   walletDictionary: {},
@@ -259,5 +260,43 @@ export class JsonStorage {
     }
     this.tradeDb.data.trades = [];
     await this.tradeDb.write();
+  }
+
+  // Circuit Breaker Methods
+  async loadCircuitBreaker(): Promise<CircuitBreakerState | undefined> {
+    await this.db.read();
+    return this.db.data?.circuitBreaker;
+  }
+
+  async saveCircuitBreaker(state: CircuitBreakerState): Promise<void> {
+    if (!this.db.data) await this.init();
+    this.db.data!.circuitBreaker = state;
+    await this.db.write();
+  }
+
+  // Trailing Stop Loss Methods
+  async loadTrailingStopStates(): Promise<Record<string, any> | undefined> {
+    await this.db.read();
+    return this.db.data?.trailingStopStates;
+  }
+
+  async saveTrailingStopStates(states: Record<string, any>): Promise<void> {
+    if (!this.db.data) await this.init();
+    this.db.data!.trailingStopStates = states;
+    await this.db.write();
+  }
+
+  async getBotTrailingStopState(botId: string): Promise<Record<number, any> | undefined> {
+    await this.db.read();
+    return this.db.data?.trailingStopStates?.[botId];
+  }
+
+  async saveBotTrailingStopState(botId: string, state: Record<number, any>): Promise<void> {
+    if (!this.db.data) await this.init();
+    if (!this.db.data!.trailingStopStates) {
+      this.db.data!.trailingStopStates = {};
+    }
+    this.db.data!.trailingStopStates[botId] = state;
+    await this.db.write();
   }
 }

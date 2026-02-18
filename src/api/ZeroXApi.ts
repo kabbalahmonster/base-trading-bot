@@ -1,15 +1,41 @@
-// src/api/ZeroXApi.ts
+/**
+ * @fileoverview 0x Protocol API client for the Base Grid Trading Bot
+ * @module api/ZeroXApi
+ * @version 1.4.0
+ */
 
 import axios, { AxiosInstance } from 'axios';
-import { ZeroXQuote } from '../types/index.js';
+import { ZeroXQuote, Chain } from '../types/index.js';
 
 const ZEROX_API_BASE = 'https://api.0x.org';
-const CHAIN_ID = 8453; // Base
 
+/**
+ * Chain ID mapping for 0x API
+ * @constant {Record<Chain, number>}
+ */
+const CHAIN_ID_MAP: Record<Chain, number> = {
+  base: 8453,
+  ethereum: 1,
+};
+
+/**
+ * Client for the 0x Protocol swap API with multi-chain support
+ * @class ZeroXApi
+ * @description Handles price discovery and swap quotes from 0x Protocol
+ */
 export class ZeroXApi {
   private client: AxiosInstance;
+  private chainId: number;
 
-  constructor(apiKey?: string) {
+  /**
+   * Creates a new 0x API client
+   * @constructor
+   * @param {string} [apiKey] - Optional 0x API key for higher rate limits
+   * @param {Chain} [chain='base'] - Blockchain to use ('base' | 'ethereum')
+   */
+  constructor(apiKey?: string, chain: Chain = 'base') {
+    this.chainId = CHAIN_ID_MAP[chain];
+    
     this.client = axios.create({
       baseURL: ZEROX_API_BASE,
       timeout: 30000,
@@ -22,7 +48,30 @@ export class ZeroXApi {
   }
 
   /**
+   * Update the chain for API calls
+   * @param {Chain} chain - New chain ('base' | 'ethereum')
+   * @description Changes the chain for subsequent API calls. Useful for multi-chain bots.
+   */
+  setChain(chain: Chain): void {
+    this.chainId = CHAIN_ID_MAP[chain];
+  }
+
+  /**
+   * Get the current chain ID
+   * @returns {number} Chain ID (8453 for Base, 1 for Ethereum)
+   */
+  getChainId(): number {
+    return this.chainId;
+  }
+
+  /**
    * Get quote for buying tokens with ETH
+   * @param {string} tokenAddress - Token contract address to buy
+   * @param {string} ethAmount - ETH amount in wei
+   * @param {string} takerAddress - Address executing the swap
+   * @param {number} [slippageBps=100] - Slippage tolerance in basis points (100 = 1%)
+   * @returns {Promise<ZeroXQuote | null>} Swap quote or null if unavailable
+   * @description Fetches a quote from 0x API for swapping ETH to tokens
    */
   async getBuyQuote(
     tokenAddress: string,
@@ -33,7 +82,7 @@ export class ZeroXApi {
     try {
       const response = await this.client.get('/swap/allowance-holder/quote', {
         params: {
-          chainId: CHAIN_ID,
+          chainId: this.chainId,
           sellToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // ETH
           buyToken: tokenAddress,
           sellAmount: ethAmount,
@@ -51,6 +100,12 @@ export class ZeroXApi {
 
   /**
    * Get quote for selling tokens for ETH
+   * @param {string} tokenAddress - Token contract address to sell
+   * @param {string} tokenAmount - Token amount in wei
+   * @param {string} takerAddress - Address executing the swap
+   * @param {number} [slippageBps=100] - Slippage tolerance in basis points (100 = 1%)
+   * @returns {Promise<ZeroXQuote | null>} Swap quote or null if unavailable
+   * @description Fetches a quote from 0x API for swapping tokens to ETH
    */
   async getSellQuote(
     tokenAddress: string,
@@ -61,7 +116,7 @@ export class ZeroXApi {
     try {
       const response = await this.client.get('/swap/allowance-holder/quote', {
         params: {
-          chainId: CHAIN_ID,
+          chainId: this.chainId,
           sellToken: tokenAddress,
           buyToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // ETH
           sellAmount: tokenAmount,
@@ -107,7 +162,18 @@ export class ZeroXApi {
   }
 
   /**
-   * Check if sell would be profitable
+   * Check if selling would be profitable after gas costs
+   * @param {string} tokenAddress - Token contract address
+   * @param {string} tokenAmount - Amount to sell in wei
+   * @param {string} ethCostBasis - Original ETH cost in wei
+   * @param {number} minProfitPercent - Minimum profit percentage required
+   * @param {string} takerAddress - Address executing the swap
+   * @returns {Promise<Object>} Profitability check result
+   * @returns {boolean} return.profitable - Whether sale meets profit threshold
+   * @returns {ZeroXQuote | null} return.quote - The swap quote used
+   * @returns {number} return.actualProfit - Actual profit percentage
+   * @description Calculates if selling tokens would be profitable considering
+   * gas costs and minimum profit requirements.
    */
   async isProfitable(
     tokenAddress: string,
@@ -129,7 +195,7 @@ export class ZeroXApi {
     // Calculate actual profit after gas
     const netEth = ethReceived - gasCost;
     const profit = netEth - ethCost;
-    const profitPercent = Number((profit * BigInt(10000)) / ethCost) / 100;
+    const profitPercent = ethCost > 0 ? Number((profit * BigInt(10000)) / ethCost) / 100 : 0;
 
     // Check against minimum
     const minProfit = (ethCost * BigInt(Math.floor(minProfitPercent * 100))) / BigInt(10000);
@@ -144,13 +210,18 @@ export class ZeroXApi {
   /**
    * Get current token price in ETH per token
    * Uses 0x price endpoint for consistent data
+   * @param {string} tokenAddress - Token contract address
+   * @param {string} takerAddress - Taker address for the quote
+   * @returns {Promise<number | null>} Price in ETH per token or null if unavailable
+   * @description Fetches price from 0x API by simulating a small buy.
+   * Returns ETH/token price ratio.
    */
   async getTokenPrice(tokenAddress: string, takerAddress: string): Promise<number | null> {
     try {
       // Use 0x price endpoint (doesn't require taker to have balance)
       const response = await this.client.get('/swap/allowance-holder/price', {
         params: {
-          chainId: CHAIN_ID,
+          chainId: this.chainId,
           sellToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // ETH
           buyToken: tokenAddress,
           sellAmount: '1000000000000000', // 0.001 ETH
@@ -182,7 +253,7 @@ export class ZeroXApi {
     try {
       const response = await this.client.get('/swap/allowance-holder/price', {
         params: {
-          chainId: CHAIN_ID,
+          chainId: this.chainId,
           sellToken: tokenAddress,
           buyToken: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE', // ETH
           sellAmount: '1000000000000000000', // 1 token (assuming 18 decimals)

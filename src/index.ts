@@ -8,7 +8,7 @@ import { ZeroXApi } from './api/ZeroXApi.js';
 import { JsonStorage } from './storage/JsonStorage.js';
 import { HeartbeatManager } from './bot/HeartbeatManager.js';
 import { GridCalculator } from './grid/GridCalculator.js';
-import { BotInstance, GridConfig, Position } from './types/index.js';
+import { BotInstance, GridConfig, Position, Chain } from './types/index.js';
 import { NotificationService } from './notifications/NotificationService.js';
 import { TelegramBot } from './notifications/TelegramBot.js';
 import { PriceOracle } from './oracle/index.js';
@@ -22,35 +22,60 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const RPC_URL = process.env.BASE_RPC_URL || 'https://base.llamarpc.com';
+const ETH_RPC_URL = process.env.ETH_RPC_URL || 'https://eth.llamarpc.com';
 const ZEROX_API_KEY = process.env.ZEROX_API_KEY;
 
 // Fallback RPC endpoints for resilience
-const RPC_FALLBACKS = [
-  'https://base.llamarpc.com',
-  'https://mainnet.base.org',
-  'https://base.publicnode.com',
-  'https://base.drpc.org',
-  'https://1rpc.io/base',
-];
+const RPC_FALLBACKS: Record<Chain, string[]> = {
+  base: [
+    'https://base.llamarpc.com',
+    'https://mainnet.base.org',
+    'https://base.publicnode.com',
+    'https://base.drpc.org',
+    'https://1rpc.io/base',
+  ],
+  ethereum: [
+    'https://eth.llamarpc.com',
+    'https://eth.drpc.org',
+    'https://rpc.ankr.com/eth',
+    'https://ethereum.publicnode.com',
+    'https://1rpc.io/eth',
+  ],
+};
 
-// Track working RPC
-let currentRpcUrl = RPC_URL;
+// Track working RPC per chain
+const currentRpcUrls: Record<Chain, string> = {
+  base: RPC_URL,
+  ethereum: ETH_RPC_URL,
+};
 
 /**
- * Get a working RPC URL with fallback support
+ * Get default RPC URL for a chain
  */
-async function getWorkingRpc(): Promise<string> {
+function getDefaultRpc(chain: Chain): string {
+  return chain === 'base' ? RPC_URL : ETH_RPC_URL;
+}
+
+/**
+ * Get a working RPC URL with fallback support for a specific chain
+ */
+async function getWorkingRpc(chain: Chain = 'base'): Promise<string> {
+  const defaultRpc = getDefaultRpc(chain);
+  const fallbacks = RPC_FALLBACKS[chain];
+  
   // First try the current/preferred RPC
-  const rpcsToTry = [currentRpcUrl, ...RPC_FALLBACKS.filter(r => r !== currentRpcUrl)];
+  const rpcsToTry = [currentRpcUrls[chain], ...fallbacks.filter(r => r !== currentRpcUrls[chain])];
   
   for (let i = 0; i < rpcsToTry.length; i++) {
     const rpc = rpcsToTry[i];
     try {
       const { createPublicClient, http } = await import('viem');
-      const { base } = await import('viem/chains');
+      const chainConfig = chain === 'base' 
+        ? (await import('viem/chains')).base 
+        : (await import('viem/chains')).mainnet;
       
       const client = createPublicClient({
-        chain: base,
+        chain: chainConfig,
         transport: http(rpc),
       });
       
@@ -58,7 +83,7 @@ async function getWorkingRpc(): Promise<string> {
       await client.getBlockNumber();
       
       // Success! Update current RPC
-      currentRpcUrl = rpc;
+      currentRpcUrls[chain] = rpc;
       
       if (i > 0) {
         console.log(chalk.green(`✓ Switched to working RPC: ${rpc}`));
@@ -72,11 +97,12 @@ async function getWorkingRpc(): Promise<string> {
   }
   
   // All RPCs failed, return default and let it fail later with proper error
-  console.log(chalk.red('✗ All RPC endpoints failed. Using default.'));
-  return RPC_URL;
+  console.log(chalk.red(`✗ All ${chain} RPC endpoints failed. Using default.`));
+  return defaultRpc;
 }
 
-console.log(chalk.cyan.bold('\n🤖 Base Grid Trading Bot\n'));
+console.log(chalk.cyan.bold('\n🤖 Multi-Chain Grid Trading Bot\n'));
+console.log(chalk.dim('Supports: Base and Ethereum Mainnet\n'));
 
 async function main() {
   const storage = new JsonStorage('./bots.json');
@@ -88,6 +114,32 @@ async function main() {
   // Initialize PnL Tracker with storage (JsonStorage now includes trade history)
   const pnLTracker = new PnLTracker(storage);
   await pnLTracker.init();
+
+  // Check if wallets exist and prompt for password early
+  const walletDictionary = await storage.getWalletDictionary();
+  const hasWallets = Object.keys(walletDictionary).length > 0;
+  
+  if (hasWallets) {
+    console.log(chalk.cyan('\n🔐 Wallets detected. Please unlock to continue.\n'));
+    const { password } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'password',
+        message: 'Enter master password:',
+        mask: '*',
+      },
+    ]);
+
+    try {
+      await walletManager.initialize(password);
+      const primaryWalletId = await storage.getPrimaryWalletId();
+      walletManager.importData({ walletDictionary, primaryWalletId });
+      console.log(chalk.green('✓ Wallet unlocked\n'));
+    } catch (error: any) {
+      console.log(chalk.red(`\n✗ Invalid password: ${error.message}`));
+      console.log(chalk.yellow('Continuing in read-only mode. Some features will be unavailable.\n'));
+    }
+  }
 
   // Initialize Notification Service from environment
   const notificationService = NotificationService.getInstance();
@@ -297,13 +349,28 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     walletManager.importData({ walletDictionary, primaryWalletId });
   }
 
+  // Bot type selection
+  const { botType } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botType',
+      message: 'Select bot type:',
+      choices: [
+        { name: '📊 Grid Trading Bot (standard)', value: 'grid' },
+        { name: '📈 Volume Bot (buy N times, then sell all)', value: 'volume' },
+      ],
+    },
+  ]);
+
+  const isVolumeBot = botType === 'volume';
+
   // Bot configuration
   const answers = await inquirer.prompt([
     {
       type: 'input',
       name: 'name',
       message: 'Bot name:',
-      default: `Bot-${Date.now()}`,
+      default: isVolumeBot ? `VolumeBot-${Date.now()}` : `Bot-${Date.now()}`,
     },
     {
       type: 'input',
@@ -328,24 +395,45 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
       name: 'numPositions',
       message: 'Number of grid positions:',
       default: 24,
+      when: () => !isVolumeBot,
     },
     {
       type: 'confirm',
       name: 'autoPriceRange',
       message: 'Auto-calculate price range (floor=1/10 current, ceiling=4x)?',
       default: true,
+      when: () => !isVolumeBot,
     },
     {
       type: 'number',
       name: 'takeProfitPercent',
       message: 'Take profit % per position:',
       default: 8,
+      when: () => !isVolumeBot,
     },
     {
       type: 'number',
       name: 'maxActivePositions',
       message: 'Max active positions:',
       default: 4,
+      when: () => !isVolumeBot,
+    },
+    // Volume Bot specific settings
+    {
+      type: 'number',
+      name: 'volumeBuysPerCycle',
+      message: 'Number of buys per cycle:',
+      default: 3,
+      when: () => isVolumeBot,
+      validate: (input) => input > 0 || 'Must be at least 1',
+    },
+    {
+      type: 'input',
+      name: 'volumeBuyAmount',
+      message: 'ETH amount per buy:',
+      default: '0.001',
+      when: () => isVolumeBot,
+      validate: (input) => !isNaN(parseFloat(input)) && parseFloat(input) > 0 || 'Invalid amount',
     },
     {
       type: 'confirm',
@@ -393,29 +481,54 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
   }
 
   // Create config
-  const config: GridConfig = {
-    numPositions: answers.numPositions,
-    floorPrice: 0, // Will be calculated from current price
-    ceilingPrice: 0,
-    useMarketCap: false,
-    takeProfitPercent: answers.takeProfitPercent,
-    stopLossPercent: 10,
-    stopLossEnabled: false,
-    buysEnabled: true,
-    sellsEnabled: true,
-    moonBagEnabled: answers.moonBagEnabled !== undefined ? answers.moonBagEnabled : true,
-    moonBagPercent: answers.moonBagPercent || 1,
-    minProfitPercent: 2,
-    maxActivePositions: answers.maxActivePositions,
-    useFixedBuyAmount: answers.useFixedBuyAmount || false,
-    buyAmount: answers.useFixedBuyAmount ? parseFloat(answers.buyAmount || '0.001') : 0,
-    heartbeatMs: 1000,
-    skipHeartbeats: 0,
-  };
+  const config: GridConfig = isVolumeBot
+    ? {
+        // Volume Bot Config
+        numPositions: 0, // Not used in volume mode
+        floorPrice: 0,
+        ceilingPrice: 0,
+        useMarketCap: false,
+        takeProfitPercent: 0, // Not used
+        stopLossPercent: 0,
+        stopLossEnabled: false,
+        buysEnabled: true,
+        sellsEnabled: true,
+        moonBagEnabled: false, // Not used in volume mode (sells all)
+        moonBagPercent: 0,
+        minProfitPercent: 0, // Not used
+        maxActivePositions: 1, // Single "position" for tracking
+        useFixedBuyAmount: true,
+        buyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
+        volumeMode: true,
+        volumeBuysPerCycle: answers.volumeBuysPerCycle || 3,
+        volumeBuyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
+        heartbeatMs: 1000,
+        skipHeartbeats: 0,
+      }
+    : {
+        // Grid Bot Config
+        numPositions: answers.numPositions,
+        floorPrice: 0, // Will be calculated from current price
+        ceilingPrice: 0,
+        useMarketCap: false,
+        takeProfitPercent: answers.takeProfitPercent,
+        stopLossPercent: 10,
+        stopLossEnabled: false,
+        buysEnabled: true,
+        sellsEnabled: true,
+        moonBagEnabled: answers.moonBagEnabled !== undefined ? answers.moonBagEnabled : true,
+        moonBagPercent: answers.moonBagPercent || 1,
+        minProfitPercent: 2,
+        maxActivePositions: answers.maxActivePositions,
+        useFixedBuyAmount: answers.useFixedBuyAmount || false,
+        buyAmount: answers.useFixedBuyAmount ? parseFloat(answers.buyAmount || '0.001') : 0,
+        heartbeatMs: 1000,
+        skipHeartbeats: 0,
+      };
 
-  // Generate grid
+  // Generate grid (empty for volume bots)
   const currentPrice = 0.000001; // Placeholder - would fetch real price
-  const positions = GridCalculator.generateGrid(currentPrice, config);
+  const positions = isVolumeBot ? [] : GridCalculator.generateGrid(currentPrice, config);
 
   // Create instance
   const instance: BotInstance = {
@@ -423,6 +536,7 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     name: answers.name,
     tokenAddress: answers.tokenAddress,
     tokenSymbol: answers.tokenSymbol,
+    chain: 'base',
     walletAddress: botWalletAddress,
     useMainWallet: answers.useMainWallet,
     config,
@@ -435,13 +549,25 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     enabled: true,  // New bots are enabled by default
     lastHeartbeat: 0,
     currentPrice,
+    // Initialize volume mode state
+    volumeBuysInCycle: isVolumeBot ? 0 : undefined,
+    volumeAccumulatedTokens: isVolumeBot ? '0' : undefined,
+    volumeCycleCount: isVolumeBot ? 0 : undefined,
     createdAt: Date.now(),
     lastUpdated: Date.now(),
   };
 
   await storage.saveBot(instance);
-  console.log(chalk.green(`\n✓ Bot "${answers.name}" created with ${positions.length} positions`));
-  console.log(chalk.cyan(`  Wallet: ${botWalletAddress}`));
+  
+  if (isVolumeBot) {
+    console.log(chalk.green(`\n✓ Volume Bot "${answers.name}" created`));
+    console.log(chalk.cyan(`  Mode: Buy ${config.volumeBuysPerCycle} times, then sell all`));
+    console.log(chalk.cyan(`  Buy Amount: ${config.volumeBuyAmount} ETH per buy`));
+    console.log(chalk.cyan(`  Wallet: ${botWalletAddress}`));
+  } else {
+    console.log(chalk.green(`\n✓ Grid Bot "${answers.name}" created with ${positions.length} positions`));
+    console.log(chalk.cyan(`  Wallet: ${botWalletAddress}`));
+  }
 
   if (answers.startImmediately) {
     console.log(chalk.yellow('\n⚠️  Fund the wallet with ETH before starting'));
@@ -621,11 +747,15 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
     for (const bot of bots) {
       const enabledStatus = bot.enabled ? chalk.green('✓') : chalk.red('✗');
       const runningStatus = bot.isRunning ? chalk.green('● RUNNING') : chalk.gray('○ Stopped');
-      const buyAmountInfo = bot.config.useFixedBuyAmount 
-        ? chalk.dim(`[${bot.config.buyAmount} ETH/buy]`) 
-        : chalk.dim('[auto-buy]');
+      const isVolumeBot = bot.config.volumeMode;
+      const botTypeLabel = isVolumeBot ? chalk.magenta('[VOLUME]') : chalk.blue('[GRID]');
+      const buyAmountInfo = isVolumeBot
+        ? chalk.dim(`[${bot.config.volumeBuyAmount} ETH/buy, ${bot.volumeBuysInCycle || 0}/${bot.config.volumeBuysPerCycle || 3} buys]`)
+        : bot.config.useFixedBuyAmount 
+          ? chalk.dim(`[${bot.config.buyAmount} ETH/buy]`)
+          : chalk.dim('[auto-buy]');
       
-      console.log(`  ${enabledStatus} ${bot.name}: ${runningStatus} ${buyAmountInfo} ${!bot.enabled ? chalk.red('[DISABLED]') : ''}`);
+      console.log(`  ${enabledStatus} ${bot.name}: ${botTypeLabel} ${runningStatus} ${buyAmountInfo} ${!bot.enabled ? chalk.red('[DISABLED]') : ''}`);
       console.log(`     Token: ${bot.tokenSymbol} (${bot.tokenAddress.slice(0, 10)}...)`);
       console.log(`     Wallet: ${bot.walletAddress}`);
       
@@ -657,10 +787,17 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
         });
         console.log(`     ${bot.tokenSymbol} Balance: ${formatUnits(tokenBalance, decimals)}`);
         
-        // Show active positions
-        const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING').length;
-        if (holdingPositions > 0) {
-          console.log(`     Active Positions: ${holdingPositions}/${bot.config.maxActivePositions}`);
+        // Show active positions or volume status
+        if (isVolumeBot) {
+          const accumulated = formatEther(BigInt(bot.volumeAccumulatedTokens || '0'));
+          const cycles = bot.volumeCycleCount || 0;
+          console.log(`     Volume Status: ${bot.volumeBuysInCycle || 0}/${bot.config.volumeBuysPerCycle || 3} buys, ${accumulated} tokens accumulated`);
+          console.log(`     Cycles Completed: ${cycles}`);
+        } else {
+          const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING').length;
+          if (holdingPositions > 0) {
+            console.log(`     Active Positions: ${holdingPositions}/${bot.config.maxActivePositions}`);
+          }
         }
       } catch (error: any) {
         console.log(chalk.dim(`     ⚠ Could not fetch balances: ${error.message.slice(0, 30)}...`));

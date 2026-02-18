@@ -5,3 +5,4 @@ export { TelegramNotifier, type TelegramConfig, type AlertLevel, type Notificati
 export { AlertTemplates } from './AlertTemplates.js';
 export { NotificationService, type NotificationServiceConfig } from './NotificationService.js';
 export { TelegramBot, type TelegramBotConfig } from './TelegramBot.js';
+export { DiscordNotifier, type DiscordConfig, type DiscordEmbed, type DiscordMessage } from './DiscordNotifier.js';

@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Common issues and solutions for the Base Grid Trading Bot.
+Common issues and solutions for the Base Grid Trading Bot v1.4.0
 
 ## Quick Diagnostics
 
@@ -62,14 +62,116 @@ Monitor shows: "Price confidence: 0%"
 - High volatility or RPC issues
 - Solution: Wait for confidence to return (>80%)
 
+**Volume Mode Cycle**
+```
+If in volume mode, bot accumulates before selling
+```
+- Check volumeBuysInCycle vs target
+- Normal behavior - waits for cycle completion
+
 ---
 
-### 2. "Main wallet not initialized"
+### 2. Multi-Chain Issues
 
-#### Symptom
+#### "Wrong chain for token"
+
+**Symptom:**
+Error when starting bot or getting quotes.
+
+**Cause:**
+Token contract doesn't exist on selected chain.
+
+**Solution:**
+1. Verify token address on chain explorer:
+   - Base: https://basescan.org
+   - Ethereum: https://etherscan.io
+2. Create new bot with correct chain
+3. Each bot is tied to one chain
+
+#### "RPC timeout on Ethereum"
+
+**Symptom:**
+Slow responses or timeouts when using Ethereum mainnet.
+
+**Cause:**
+Ethereum mainnet has higher latency than L2s.
+
+**Solution:**
+1. Bot will auto-retry with fallback RPCs
+2. Increase patience - ETH mainnet is slower
+3. Consider using Base for faster trading
+4. Check your internet connection
+
+#### "Chain ID mismatch"
+
+**Symptom:**
+Transaction errors mentioning chain ID.
+
+**Cause:**
+Wallet or RPC on different chain than bot configuration.
+
+**Solution:**
+1. Verify bot.chain matches your intent
+2. Check RPC URL matches chain
+3. Restart bot after chain changes
+
+---
+
+### 3. Volume Mode Issues
+
+#### "Volume bot not selling"
+
+**Symptom:**
+Bot buys but never sells in volume mode.
+
+**Cause:**
+Volume mode accumulates for N buys before distributing.
+
+**Solution:**
+1. Check current buy count in cycle:
+   ```
+   Monitor → Individual Detail → Volume Stats
+   ```
+2. Normal behavior - waits for cycle completion
+3. Check volumeBuysPerCycle setting
+4. Ensure sellsEnabled is true
+
+#### "Volume mode cycle stuck"
+
+**Symptom:**
+Buys stop before completing cycle.
+
+**Cause:**
+Insufficient ETH or max positions reached mid-cycle.
+
+**Solution:**
+1. Fund wallet with more ETH
+2. Increase maxActivePositions
+3. Or reduce volumeBuysPerCycle
+
+#### "Unexpected profit in volume mode"
+
+**Symptom:**
+Volume mode generating profit when set to break-even.
+
+**Cause:**
+Price movement between buy and sell.
+
+**Solution:**
+1. Normal market behavior
+2. Set minProfitPercent to 0 for pure volume
+3. Or embrace the bonus profit!
+
+---
+
+### 4. Wallet Issues
+
+#### "Main wallet not initialized"
+
+**Symptom:**
 Error when funding wallet or starting bot.
 
-#### Solution
+**Solution:**
 ```bash
 # Re-initialize with password
 npm start
@@ -87,32 +189,56 @@ ls -la data/wallets.json
 → 🔧 Manage wallets → Create main wallet
 ```
 
+#### Cannot decrypt wallet
+
+**Symptom:**
+"Invalid password" or decryption errors.
+
+**Cause:**
+- Wrong password entered
+- Wallet file corrupted
+- Encryption mismatch
+
+**Solution:**
+1. Verify correct password (case-sensitive)
+2. Check Caps Lock
+3. If file corrupted, restore from backup
+4. Worst case: Create new wallets (funds are on-chain, recoverable with private key)
+
 ---
 
-### 3. "No quote available from 0x"
+### 5. API & Quote Issues
 
-#### Symptom
+#### "No quote available from 0x"
+
+**Symptom:**
 Bot can't get swap quotes.
 
-#### Causes
+**Causes:**
 
 **Low Liquidity Token**
 - Token has no 0x liquidity
 - Solution: Try different token
 
 **Invalid Token Address**
-- Check address on [basescan.org](https://basescan.org)
+- Check address on chain explorer
 - Solution: Verify contract address
 
 **0x API Rate Limit**
 - Free tier limited to 10 req/s
 - Solution: Add ZEROX_API_KEY to .env
 
+**Chain Not Supported**
+- 0x doesn't support selected chain
+- Solution: Use Base or Ethereum mainnet
+
 ---
 
-### 4. Wallet Shows 0 Balance
+### 6. Balance Issues
 
-#### Symptom
+#### Wallet Shows 0 Balance
+
+**Symptom:**
 Balance displays 0.000 ETH but you sent funds.
 
 #### Solutions
@@ -125,7 +251,9 @@ Wait 30 seconds and refresh
 **2. Check Correct Address**
 ```
 → 👛 View wallet balances
-Compare with Basescan: https://basescan.org/address/YOUR_ADDRESS
+Compare with chain explorer:
+  Base: https://basescan.org
+  Ethereum: https://etherscan.io
 ```
 
 **3. RPC Issues**
@@ -136,15 +264,18 @@ If one fails, bot auto-switches to fallback
 
 **4. Wrong Network**
 ```
-Verify: Basescan shows Base mainnet
-Not: Ethereum mainnet or Base testnet
+Verify explorer shows correct chain:
+  - Base mainnet (not Ethereum)
+  - Ethereum mainnet (not testnet)
 ```
 
 ---
 
-### 5. "Insufficient funds for gas"
+### 7. Gas & Transaction Issues
 
-#### Symptom
+#### "Insufficient funds for gas"
+
+**Symptom:**
 Transaction fails with gas error.
 
 #### Solutions
@@ -164,18 +295,56 @@ Total needed: buyAmount + 0.01 ETH
 
 **Check Current Gas Prices**
 ```
-Visit: https://basescan.org/gastracker
-Base gas usually: 0.1-0.5 gwei (very cheap)
+Base: https://basescan.org/gastracker
+Ethereum: https://etherscan.io/gastracker
+```
+
+#### Transaction Failed / Reverted
+
+**Symptom:**
+Trade appears on chain but failed.
+
+#### Solutions
+
+**Check Transaction**
+```
+1. Copy TX hash from monitor
+2. Paste into chain explorer
+3. Check error message
+```
+
+**Common Failures:**
+
+**Out of Gas**
+```
+Error: "out of gas"
+Solution: Bot auto-estimates, but try smaller buy amount
+```
+
+**Slippage Exceeded**
+```
+Error: "Too little received"
+Cause: Price moved between quote and execution
+Solution: Normal, bot will retry next cycle
+```
+
+**Token Transfer Failed**
+```
+Error: "ERC20 transfer failed"
+Cause: Token has transfer tax or restrictions
+Solution: Try different token
 ```
 
 ---
 
-### 6. Bot Stopped After Errors
+### 8. Bot Stopped
 
-#### Symptom
+#### Bot Stopped After Errors
+
+**Symptom:**
 Bot shows "○ Stopped" with error count.
 
-#### Check Errors
+**Check Errors:**
 ```bash
 → 📺 Monitor bots → Individual Detail
 Look at: "Errors: X consecutive errors"
@@ -205,78 +374,16 @@ grep "ERROR" data/bots.json
 | "Nonce too low" | Transaction stuck | Wait, then retry |
 | "Insufficient allowance" | Token approval failed | Manual approval |
 | "Slippage too high" | Price moved | Bot auto-retries |
+| "Price confidence low" | Oracle divergence | Wait for confidence |
+| "Chain ID mismatch" | Wrong network | Recreate bot on correct chain |
 
 ---
 
-### 7. "Transaction failed"
+### 9. Grid Issues
 
-#### Symptom
-Trade appears on chain but failed (out of gas, reverted).
+#### Grid Positions Not Covering Price
 
-#### Solutions
-
-**Check Transaction**
-```
-1. Copy TX hash from monitor
-2. Paste into: https://basescan.org/tx/YOUR_TX_HASH
-3. Check error message
-```
-
-**Common Failures:**
-
-**Out of Gas**
-```
-Error: "out of gas"
-Solution: Bot auto-estimates, but try smaller buy amount
-```
-
-**Slippage Exceeded**
-```
-Error: "Too little received"
-Cause: Price moved between quote and execution
-Solution: Normal, bot will retry next cycle
-```
-
-**Token Transfer Failed**
-```
-Error: "ERC20 transfer failed"
-Cause: Token has transfer tax or restrictions
-Solution: Try different token
-```
-
----
-
-### 8. Can't Export Private Key
-
-#### Symptom
-Export fails with error.
-
-#### Solutions
-
-**Check Password**
-```
-Must enter correct master password
-→ 🔧 Manage wallets → Export private key
-```
-
-**Check Wallet Exists**
-```
-→ 🔧 Manage wallets → List all wallets
-Verify wallet is in list
-```
-
-**Secure Terminal**
-```
-Warning: Private key will display in terminal
-Make sure: No screen recording, no shoulder surfing
-After export: Run "history -c" to clear bash history
-```
-
----
-
-### 9. Grid Positions Not Covering Price
-
-#### Symptom
+**Symptom:**
 Price moved outside grid range (too high or too low).
 
 #### Solutions
@@ -310,9 +417,11 @@ No lost funds during reconfiguration
 
 ---
 
-### 10. Telegram Notifications Not Working
+### 10. Notification Issues
 
-#### Symptom
+#### Telegram Notifications Not Working
+
+**Symptom:**
 No Telegram messages for trades.
 
 #### Solutions
@@ -346,9 +455,11 @@ Options: "all", "trades-only", "errors-only"
 
 ---
 
-### 11. P&L Numbers Don't Match
+### 11. P&L Issues
 
-#### Symptom
+#### P&L Numbers Don't Match
+
+**Symptom:**
 Profit calculations seem wrong.
 
 #### Understanding P&L
@@ -386,9 +497,11 @@ Total performance if you sold everything now
 
 ---
 
-### 12. "Token approval failed"
+### 12. Token Approval Issues
 
-#### Symptom
+#### "Token approval failed"
+
+**Symptom:**
 Sell fails with approval error.
 
 #### Solution
@@ -404,9 +517,9 @@ cast send TOKEN_ADDRESS \
   --private-key YOUR_KEY
 ```
 
-Or use Basescan:
+Or use chain explorer:
 ```
-1. Go to token contract on Basescan
+1. Go to token contract on explorer
 2. Connect wallet
 3. Write contract → approve
 4. Spender: 0x (0x exchange proxy)
@@ -414,6 +527,95 @@ Or use Basescan:
 ```
 
 **Note:** Bot uses exact approvals normally. Manual unlimited approval fixes this.
+
+---
+
+### 13. Daemon Mode Issues
+
+#### Daemon Won't Start
+
+**Symptom:**
+Cannot start daemon process.
+
+**Causes & Solutions:**
+
+**Permission Denied**
+```bash
+# Check permissions
+ls -la ~/.base-trading-bot/
+
+# Fix
+chmod 755 ~/.base-trading-bot/
+```
+
+**Port in Use**
+```bash
+# Check for existing process
+ps aux | grep base-trading-bot
+
+# Kill if needed
+kill -9 PID
+```
+
+**Node Not Found**
+```bash
+# Ensure node is in PATH
+which node
+
+# Or use full path
+/usr/local/bin/node dist/index.js
+```
+
+#### Daemon Stops Unexpectedly
+
+**Symptom:**
+Daemon process dies after some time.
+
+**Check Logs:**
+```bash
+→ 👁️ View daemon status
+→ 📋 View recent logs
+```
+
+**Common Causes:**
+- Out of memory (increase swap)
+- Unhandled exception (check logs)
+- System restart (set up systemd service)
+
+---
+
+### 14. Cross-Chain Issues
+
+#### Cannot Use Same Bot on Multiple Chains
+
+**Symptom:**
+Want to trade same token on both Base and Ethereum.
+
+**Solution:**
+```
+Create separate bots:
+  Bot-1-Base: chain='base'
+  Bot-1-Eth:  chain='ethereum'
+
+Each bot is independent with:
+  - Separate wallet (or same address, different chain)
+  - Separate configuration
+  - Separate P&L tracking
+```
+
+#### Price Differences Between Chains
+
+**Symptom:**
+Same token has different prices on Base vs Ethereum.
+
+**Explanation:**
+This is normal! Prices can vary between chains due to:
+- Different liquidity pools
+- Arbitrage delays
+- Bridge fees
+
+**Solution:**
+Each bot tracks its own chain's price independently.
 
 ---
 
@@ -485,6 +687,16 @@ rm -rf exports/
 # Then restart and recreate wallets/bots
 ```
 
+### Wallet Recovery
+
+If wallet file is lost but you have private key:
+```bash
+# Import via wallet management
+→ 🔧 Manage wallets
+→ Import wallet (if available)
+# Or create new and send funds from old address
+```
+
 ---
 
 ## Getting Help
@@ -497,6 +709,9 @@ tail -f logs/app.log
 
 # Error logs
 tail -f logs/error.log
+
+# Daemon logs
+→ 👁️ View daemon status → View logs
 
 # Transaction logs
 cat data/bots.json | jq '.bots[].positions[] | select(.status == "SOLD")'
@@ -521,6 +736,8 @@ Include:
 2. Bot configuration (share safe info only)
 3. Transaction hash (if applicable)
 4. Logs (redact private keys!)
+5. Chain being used
+6. Bot mode (profit or volume)
 
 ---
 
@@ -529,7 +746,7 @@ Include:
 | Problem | Quick Fix |
 |---------|-----------|
 | No trades | Check "NEXT BUY" in monitor |
-| 0 balance | Wait 30s, check Basescan |
+| 0 balance | Wait 30s, check explorer |
 | Gas error | Keep 0.01+ ETH reserved |
 | Bot stopped | ▶️ Start bot(s) |
 | No quotes | Check token liquidity |
@@ -537,6 +754,9 @@ Include:
 | Price out of range | 🔄 Regenerate positions |
 | No Telegram | Check .env config |
 | P&L confusion | Check realized vs unrealized |
+| Volume not selling | Check cycle completion |
+| Wrong chain | Recreate bot on correct chain |
+| Daemon died | Check logs, restart |
 
 ---
 

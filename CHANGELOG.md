@@ -5,6 +5,55 @@ All notable changes to the Base Grid Trading Bot will be documented in this file
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-02-17
+
+### Added
+
+#### Multi-Chain Support
+- **Base (Chain ID: 8453)** - Ethereum L2 with low fees
+- **Ethereum (Chain ID: 1)** - Mainnet with highest liquidity
+- Per-bot chain selection during creation
+- Chain-specific RPC endpoints with fallback
+- Cross-chain P&L tracking
+- Chain-aware price oracles
+- Unified wallet management across chains
+
+#### Volume Bot Mode
+- **Accumulation Phase** - Buy tokens in configurable batches
+- **Distribution Phase** - Sell accumulated tokens
+- **Cycle Management** - Configurable buys per cycle
+- **Volume Tracking** - Monitor generated trading volume
+- **Break-even Operation** - Optional 0% profit for pure volume
+- Ideal for:
+  - Token launch support
+  - Market making
+  - Exchange listing requirements
+  - Price discovery
+
+#### New Configuration Options
+- `chain` - Select blockchain per bot
+- `volumeMode` - Enable volume generation mode
+- `volumeBuysPerCycle` - Number of buys before distribution
+- `buysEnabled` / `sellsEnabled` - Toggle trade directions
+
+#### Enhanced Documentation
+- **FEATURES.md** - Complete feature documentation
+- Updated **README.md** with multi-chain and volume mode sections
+- Updated **API_REFERENCE.md** with new types and methods
+- Updated **TROUBLESHOOTING.md** with multi-chain and volume mode issues
+
+### Changed
+- **ZeroXApi** now supports multi-chain with `setChain()` method
+- **TradingBot** initialization accepts chain-specific configuration
+- **WalletManager** works seamlessly across chains
+- Price oracles are now chain-aware
+
+### Breaking Changes
+- None - fully backward compatible with v1.3.0 bots
+- Existing bots default to 'base' chain
+
+---
+
 ## [1.3.0] - 2026-02-17
 
 ### Added
@@ -64,6 +113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TROUBLESHOOTING.md added
 - CONTRIBUTING.md added
 
+---
+
 ## [1.2.0] - 2026-02-17
 
 ### Added
@@ -82,6 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wallet system refactored to unified dictionary
 - All wallets (main + bot) accessible for transfers
 - Updated README with comprehensive features
+
+---
 
 ## [1.0.0] - 2026-02-17
 
@@ -120,6 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Real-time status dashboard
 - Reclaim funds functionality
 
+---
+
 ## [0.9.0] - 2026-02-16
 
 ### Added
@@ -129,6 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 0x API client
 - Grid calculation logic
 
+[1.4.0]: https://github.com/kabbalahmonster/base-trading-bot/releases/tag/v1.4.0
 [1.3.0]: https://github.com/kabbalahmonster/base-trading-bot/releases/tag/v1.3.0
 [1.2.0]: https://github.com/kabbalahmonster/base-trading-bot/releases/tag/v1.2.0
 [1.1.0]: https://github.com/kabbalahmonster/base-trading-bot/releases/tag/v1.1.0

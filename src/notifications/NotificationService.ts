@@ -1,20 +1,26 @@
 // src/notifications/NotificationService.ts
-// Global notification service for the trading bot
+// Global notification service for the trading bot - supports Telegram and Discord
 
 import { TelegramNotifier, TelegramConfig, NotificationPayload } from './TelegramNotifier.js';
+import { DiscordNotifier, DiscordConfig } from './DiscordNotifier.js';
 import { AlertTemplates } from './AlertTemplates.js';
 import { BotInstance, AlertLevel } from '../types/index.js';
 
 export interface NotificationServiceConfig {
+  // Telegram
   botToken?: string;
   chatId?: string;
+  // Discord
+  discordWebhookUrl?: string;
+  // Common
   enabled?: boolean;
   alertLevel?: AlertLevel;
 }
 
 export class NotificationService {
   private static instance: NotificationService;
-  private notifier: TelegramNotifier | null = null;
+  private telegramNotifier: TelegramNotifier | null = null;
+  private discordNotifier: DiscordNotifier | null = null;
   private globalEnabled: boolean = false;
   private globalAlertLevel: AlertLevel = 'all';
 
@@ -36,14 +42,24 @@ export class NotificationService {
   initializeFromEnv(): void {
     const botToken = process.env.TELEGRAM_BOT_TOKEN;
     const chatId = process.env.TELEGRAM_CHAT_ID;
+    const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
     
+    const config: NotificationServiceConfig = {
+      enabled: true,
+      alertLevel: 'all',
+    };
+
     if (botToken && chatId) {
-      this.configure({
-        botToken,
-        chatId,
-        enabled: true,
-        alertLevel: 'all',
-      });
+      config.botToken = botToken;
+      config.chatId = chatId;
+    }
+
+    if (discordWebhookUrl) {
+      config.discordWebhookUrl = discordWebhookUrl;
+    }
+
+    if (config.botToken || config.discordWebhookUrl) {
+      this.configure(config);
     }
   }
 
@@ -54,10 +70,20 @@ export class NotificationService {
     this.globalEnabled = config.enabled ?? this.globalEnabled;
     this.globalAlertLevel = config.alertLevel ?? this.globalAlertLevel;
 
+    // Configure Telegram
     if (config.botToken && config.chatId) {
-      this.notifier = new TelegramNotifier({
+      this.telegramNotifier = new TelegramNotifier({
         botToken: config.botToken,
         chatId: config.chatId,
+        enabled: this.globalEnabled,
+        alertLevel: this.globalAlertLevel,
+      });
+    }
+
+    // Configure Discord
+    if (config.discordWebhookUrl) {
+      this.discordNotifier = new DiscordNotifier({
+        webhookUrl: config.discordWebhookUrl,
         enabled: this.globalEnabled,
         alertLevel: this.globalAlertLevel,
       });
@@ -65,20 +91,43 @@ export class NotificationService {
   }
 
   /**
-   * Check if notifications are configured and enabled
+   * Check if any notifications are configured and enabled
    */
   isConfigured(): boolean {
-    return this.notifier !== null && this.notifier.isEnabled();
+    return (
+      (this.telegramNotifier !== null && this.telegramNotifier.isEnabled()) ||
+      (this.discordNotifier !== null && this.discordNotifier.isEnabled())
+    );
   }
 
   /**
-   * Get current configuration (safe - no token)
+   * Check if Discord is configured
    */
-  getConfig(): { enabled: boolean; alertLevel: AlertLevel; configured: boolean } {
+  isDiscordConfigured(): boolean {
+    return this.discordNotifier !== null && this.discordNotifier.isEnabled();
+  }
+
+  /**
+   * Check if Telegram is configured
+   */
+  isTelegramConfigured(): boolean {
+    return this.telegramNotifier !== null && this.telegramNotifier.isEnabled();
+  }
+
+  /**
+   * Get current configuration (safe - no tokens)
+   */
+  getConfig(): { 
+    enabled: boolean; 
+    alertLevel: AlertLevel; 
+    telegramConfigured: boolean;
+    discordConfigured: boolean;
+  } {
     return {
       enabled: this.globalEnabled,
       alertLevel: this.globalAlertLevel,
-      configured: this.notifier !== null,
+      telegramConfigured: this.telegramNotifier !== null,
+      discordConfigured: this.discordNotifier !== null,
     };
   }
 
@@ -89,56 +138,117 @@ export class NotificationService {
     this.globalEnabled = enabled;
     this.globalAlertLevel = alertLevel;
     
-    if (this.notifier) {
-      this.notifier.updateConfig({ enabled, alertLevel });
+    if (this.telegramNotifier) {
+      this.telegramNotifier.updateConfig({ enabled, alertLevel });
+    }
+    
+    if (this.discordNotifier) {
+      this.discordNotifier.updateConfig({ enabled, alertLevel });
     }
   }
 
   /**
-   * Send a simple text message (for daemon status, etc.)
+   * Send a simple text message to all configured channels
    */
   async sendMessage(message: string): Promise<boolean> {
-    if (!this.notifier) return false;
-    return this.notifier.sendMessage(message);
+    const results: boolean[] = [];
+    
+    if (this.telegramNotifier) {
+      results.push(await this.telegramNotifier.sendMessage(message));
+    }
+    
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.sendMessage(message));
+    }
+    
+    return results.some(r => r); // Return true if any succeeded
   }
 
   /**
-   * Send notification for a bot
+   * Send notification for a bot to all configured channels
    */
   async notify(bot: BotInstance, payload: Omit<NotificationPayload, 'botName'>): Promise<boolean> {
-    if (!this.notifier) return false;
+    const results: boolean[] = [];
 
-    // Check bot-specific notification settings
-    const botAlertLevel = this.getBotAlertLevel(bot);
-    
-    // Create a temporary notifier with bot's alert level
-    const botConfig: TelegramConfig = {
-      ...this.notifier.getConfig(),
-      alertLevel: botAlertLevel,
-      botToken: '', // Not needed for check
-      chatId: '',   // Not needed for check
-    };
+    // Send via Telegram
+    if (this.telegramNotifier) {
+      const botAlertLevel = this.getBotAlertLevel(bot);
+      const botConfig: TelegramConfig = {
+        ...this.telegramNotifier.getConfig(),
+        alertLevel: botAlertLevel,
+        botToken: '',
+        chatId: '',
+      };
 
-    // Check if this type should be sent for this bot
-    const tempNotifier = new TelegramNotifier(botConfig);
-    if (!tempNotifier.isEnabled()) return false;
+      const tempNotifier = new TelegramNotifier(botConfig);
+      if (tempNotifier.isEnabled()) {
+        results.push(await this.telegramNotifier.notify({
+          ...payload,
+          botName: bot.name,
+        }));
+      }
+    }
 
-    // Send the notification
-    return this.notifier.notify({
-      ...payload,
-      botName: bot.name,
-    });
+    // Send via Discord
+    if (this.discordNotifier) {
+      const botAlertLevel = this.getBotAlertLevel(bot);
+      const botConfig: DiscordConfig = {
+        ...this.discordNotifier.getConfig(),
+        alertLevel: botAlertLevel,
+        webhookUrl: '',
+      };
+
+      const tempNotifier = new DiscordNotifier(botConfig);
+      if (tempNotifier.isEnabled()) {
+        // Convert payload to Discord format based on type
+        switch (payload.type) {
+          case 'trade':
+            results.push(await this.discordNotifier.notifyTrade(
+              bot.name,
+              bot.tokenSymbol,
+              'buy',
+              (payload.metadata as any)?.tokenAmount || '0',
+              (payload.metadata as any)?.ethAmount || '0',
+              (payload.metadata as any)?.positionId
+            ));
+            break;
+          case 'profit':
+            results.push(await this.discordNotifier.notifyProfit(
+              bot.name,
+              bot.tokenSymbol,
+              (payload.metadata as any)?.profitPercent || 0,
+              ((payload.metadata as any)?.profitEth || '0').toString(),
+              (payload.metadata as any)?.positionId
+            ));
+            break;
+          case 'error':
+            results.push(await this.discordNotifier.notifyError(
+              bot.name,
+              (payload.metadata as any)?.error || 'Unknown error',
+              (payload.metadata as any)?.context
+            ));
+            break;
+          case 'warning':
+            results.push(await this.discordNotifier.notifyWarning(
+              bot.name,
+              (payload.metadata as any)?.warning || 'Warning',
+              (payload.metadata as any)?.action
+            ));
+            break;
+        }
+      }
+    }
+
+    return results.some(r => r);
   }
 
   /**
    * Get the effective alert level for a bot
    */
   private getBotAlertLevel(bot: BotInstance): AlertLevel {
-    // If bot has its own settings and doesn't use global
     if (bot.notifications && !bot.notifications.useGlobal) {
       return bot.notifications.alertLevel;
     }
-    // Otherwise use global
     return this.globalAlertLevel;
   }
 
@@ -151,20 +261,39 @@ export class NotificationService {
     ethAmount: string,
     positionId?: number
   ): Promise<boolean> {
-    const message = AlertTemplates.tradeExecuted(
-      bot.name,
-      bot.tokenSymbol,
-      tokenAmount,
-      ethAmount,
-      positionId
-    );
+    const results: boolean[] = [];
 
-    return this.notify(bot, {
-      type: 'trade',
-      message,
-      timestamp: Date.now(),
-      metadata: { positionId, tokenAmount, ethAmount },
-    });
+    // Telegram
+    if (this.telegramNotifier) {
+      const message = AlertTemplates.tradeExecuted(
+        bot.name,
+        bot.tokenSymbol,
+        tokenAmount,
+        ethAmount,
+        positionId
+      );
+
+      results.push(await this.notify(bot, {
+        type: 'trade',
+        message,
+        timestamp: Date.now(),
+        metadata: { positionId, tokenAmount, ethAmount },
+      }));
+    }
+
+    // Discord
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.notifyTrade(
+        bot.name,
+        bot.tokenSymbol,
+        'buy',
+        tokenAmount,
+        ethAmount,
+        positionId
+      ));
+    }
+
+    return results.some(r => r);
   }
 
   /**
@@ -177,21 +306,39 @@ export class NotificationService {
     totalEth?: string | bigint,
     positionId?: number
   ): Promise<boolean> {
-    const message = AlertTemplates.tradeProfit(
-      bot.name,
-      bot.tokenSymbol,
-      profitPercent,
-      profitEth,
-      totalEth,
-      positionId
-    );
+    const results: boolean[] = [];
 
-    return this.notify(bot, {
-      type: 'profit',
-      message,
-      timestamp: Date.now(),
-      metadata: { positionId, profitPercent, profitEth, totalEth },
-    });
+    // Telegram
+    if (this.telegramNotifier) {
+      const message = AlertTemplates.tradeProfit(
+        bot.name,
+        bot.tokenSymbol,
+        profitPercent,
+        profitEth,
+        totalEth,
+        positionId
+      );
+
+      results.push(await this.notify(bot, {
+        type: 'profit',
+        message,
+        timestamp: Date.now(),
+        metadata: { positionId, profitPercent, profitEth, totalEth },
+      }));
+    }
+
+    // Discord
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.notifyProfit(
+        bot.name,
+        bot.tokenSymbol,
+        profitPercent,
+        profitEth.toString(),
+        positionId
+      ));
+    }
+
+    return results.some(r => r);
   }
 
   /**
@@ -202,14 +349,30 @@ export class NotificationService {
     errorMessage: string,
     context?: string
   ): Promise<boolean> {
-    const message = AlertTemplates.error(bot.name, errorMessage, context);
+    const results: boolean[] = [];
 
-    return this.notify(bot, {
-      type: 'error',
-      message,
-      timestamp: Date.now(),
-      metadata: { error: errorMessage, context },
-    });
+    // Telegram
+    if (this.telegramNotifier) {
+      const message = AlertTemplates.error(bot.name, errorMessage, context);
+
+      results.push(await this.notify(bot, {
+        type: 'error',
+        message,
+        timestamp: Date.now(),
+        metadata: { error: errorMessage, context },
+      }));
+    }
+
+    // Discord
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.notifyError(
+        bot.name,
+        errorMessage,
+        context
+      ));
+    }
+
+    return results.some(r => r);
   }
 
   /**
@@ -220,14 +383,30 @@ export class NotificationService {
     warningMessage: string,
     action?: string
   ): Promise<boolean> {
-    const message = AlertTemplates.warning(bot.name, warningMessage, action);
+    const results: boolean[] = [];
 
-    return this.notify(bot, {
-      type: 'warning',
-      message,
-      timestamp: Date.now(),
-      metadata: { warning: warningMessage, action },
-    });
+    // Telegram
+    if (this.telegramNotifier) {
+      const message = AlertTemplates.warning(bot.name, warningMessage, action);
+
+      results.push(await this.notify(bot, {
+        type: 'warning',
+        message,
+        timestamp: Date.now(),
+        metadata: { warning: warningMessage, action },
+      }));
+    }
+
+    // Discord
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.notifyWarning(
+        bot.name,
+        warningMessage,
+        action
+      ));
+    }
+
+    return results.some(r => r);
   }
 
   /**
@@ -238,18 +417,34 @@ export class NotificationService {
     errorCount: number,
     reason: string
   ): Promise<boolean> {
-    const message = AlertTemplates.botStopped(bot.name, errorCount, reason);
+    const results: boolean[] = [];
 
-    return this.notify(bot, {
-      type: 'warning',
-      message,
-      timestamp: Date.now(),
-      metadata: { errorCount, reason },
-    });
+    // Telegram
+    if (this.telegramNotifier) {
+      const message = AlertTemplates.botStopped(bot.name, errorCount, reason);
+
+      results.push(await this.notify(bot, {
+        type: 'warning',
+        message,
+        timestamp: Date.now(),
+        metadata: { errorCount, reason },
+      }));
+    }
+
+    // Discord
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.notifyWarning(
+        bot.name,
+        `Bot stopped after ${errorCount} errors: ${reason}`,
+        'Manual restart required'
+      ));
+    }
+
+    return results.some(r => r);
   }
 
   /**
-   * Send daily summary (global, not bot-specific)
+   * Send daily summary
    */
   async sendDailySummary(
     totalProfitEth: string | bigint,
@@ -258,7 +453,7 @@ export class NotificationService {
     sellCount: number,
     activeBots: number
   ): Promise<boolean> {
-    if (!this.notifier) return false;
+    const results: boolean[] = [];
 
     const date = new Date().toLocaleDateString('en-US', {
       weekday: 'long',
@@ -266,22 +461,39 @@ export class NotificationService {
       day: 'numeric',
     });
 
-    const message = AlertTemplates.dailySummary(
-      date,
-      totalProfitEth,
-      totalTrades,
-      buyCount,
-      sellCount,
-      activeBots
-    );
+    // Telegram
+    if (this.telegramNotifier) {
+      const message = AlertTemplates.dailySummary(
+        date,
+        totalProfitEth,
+        totalTrades,
+        buyCount,
+        sellCount,
+        activeBots
+      );
 
-    return this.notifier.notify({
-      type: 'summary',
-      botName: 'Daily Report',
-      message,
-      timestamp: Date.now(),
-      metadata: { totalProfitEth, totalTrades, buyCount, sellCount, activeBots },
-    });
+      results.push(await this.telegramNotifier.notify({
+        type: 'summary',
+        botName: 'Daily Report',
+        message,
+        timestamp: Date.now(),
+        metadata: { totalProfitEth, totalTrades, buyCount, sellCount, activeBots },
+      }));
+    }
+
+    // Discord
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.sendDailySummary(
+        date,
+        totalProfitEth.toString(),
+        totalTrades,
+        buyCount,
+        sellCount,
+        activeBots
+      ));
+    }
+
+    return results.some(r => r);
   }
 
   /**
@@ -292,32 +504,105 @@ export class NotificationService {
     positionsLiquidated: number,
     totalEthReceived: string | bigint
   ): Promise<boolean> {
-    const message = AlertTemplates.allPositionsLiquidated(
-      bot.name,
-      positionsLiquidated,
-      totalEthReceived
-    );
+    const results: boolean[] = [];
 
-    return this.notify(bot, {
-      type: 'warning',
-      message,
-      timestamp: Date.now(),
-      metadata: { positionsLiquidated, totalEthReceived },
-    });
+    // Telegram
+    if (this.telegramNotifier) {
+      const message = AlertTemplates.allPositionsLiquidated(
+        bot.name,
+        positionsLiquidated,
+        totalEthReceived
+      );
+
+      results.push(await this.notify(bot, {
+        type: 'warning',
+        message,
+        timestamp: Date.now(),
+        metadata: { positionsLiquidated, totalEthReceived },
+      }));
+    }
+
+    // Discord
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.notifyWarning(
+        bot.name,
+        `Liquidated ${positionsLiquidated} positions`,
+        `Received ${totalEthReceived.toString()} ETH`
+      ));
+    }
+
+    return results.some(r => r);
   }
 
   /**
-   * Send test notification
+   * Send circuit breaker notification
    */
-  async sendTestNotification(): Promise<{ success: boolean; message: string }> {
-    if (!this.notifier) {
-      return {
-        success: false,
-        message: 'Notifications not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env',
-      };
+  async notifyCircuitBreaker(
+    reason: string,
+    dailyLossPercent: number,
+    cooldownMinutes: number
+  ): Promise<boolean> {
+    const results: boolean[] = [];
+
+    const message = `🚨 CIRCUIT BREAKER TRIGGERED\n` +
+      `Reason: ${reason}\n` +
+      `All trading bots have been stopped.\n` +
+      `Cooldown: ${cooldownMinutes} minutes`;
+
+    if (this.telegramNotifier) {
+      results.push(await this.telegramNotifier.sendMessage(message));
     }
 
-    return this.notifier.sendTestMessage();
+    if (this.discordNotifier) {
+      results.push(await this.discordNotifier.notifyCircuitBreaker(
+        reason,
+        dailyLossPercent,
+        cooldownMinutes
+      ));
+    }
+
+    return results.some(r => r);
+  }
+
+  /**
+   * Send test notification to all configured channels
+   */
+  async sendTestNotification(): Promise<{ success: boolean; message: string; telegram?: boolean; discord?: boolean }> {
+    const result: { success: boolean; message: string; telegram?: boolean; discord?: boolean } = {
+      success: false,
+      message: '',
+    };
+
+    if (!this.isConfigured()) {
+      result.message = 'No notifications configured. Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID and/or DISCORD_WEBHOOK_URL in .env';
+      return result;
+    }
+
+    const results: string[] = [];
+
+    if (this.telegramNotifier) {
+      const telegramResult = await this.telegramNotifier.sendTestMessage();
+      result.telegram = telegramResult.success;
+      if (telegramResult.success) {
+        results.push('Telegram: ✓');
+      } else {
+        results.push(`Telegram: ✗ (${telegramResult.message})`);
+      }
+    }
+
+    if (this.discordNotifier) {
+      const discordResult = await this.discordNotifier.sendTestMessage();
+      result.discord = discordResult.success;
+      if (discordResult.success) {
+        results.push('Discord: ✓');
+      } else {
+        results.push(`Discord: ✗ (${discordResult.message})`);
+      }
+    }
+
+    result.success = (result.telegram || false) || (result.discord || false);
+    result.message = results.join(', ');
+    return result;
   }
 
   /**
