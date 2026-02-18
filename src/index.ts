@@ -897,15 +897,47 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
 }
 
 async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
-  console.log(chalk.dim('Press Ctrl+C or wait 60 seconds to return to menu\n'));
+  console.log(chalk.dim('Press X to exit, or wait 60 seconds\n'));
 
   // Get working RPC
   const workingRpc = await getWorkingRpc();
 
   let refreshCount = 0;
   const maxRefreshes = 60; // Run for 60 seconds
+  let shouldExit = false;
+
+  // Setup keypress listener
+  const stdin = process.stdin;
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding('utf8');
+
+  const keyListener = (key: string) => {
+    if (key.toLowerCase() === 'x') {
+      shouldExit = true;
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', keyListener);
+    }
+  };
+  stdin.on('data', keyListener);
 
   const interval = setInterval(async () => {
+    if (shouldExit) {
+      clearInterval(interval);
+      console.log(chalk.dim('\nExiting monitor...\n'));
+      return;
+    }
+
+    refreshCount++;
+    if (refreshCount > maxRefreshes) {
+      clearInterval(interval);
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', keyListener);
+      console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
+      return;
+    }
     refreshCount++;
     if (refreshCount > maxRefreshes) {
       clearInterval(interval);
@@ -1004,12 +1036,17 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
 
     // Footer
     console.log(chalk.dim('─'.repeat(66)));
-    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Ctrl+C to exit | RPC: ${workingRpc.slice(0, 30)}...`));
+    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Press X to exit | RPC: ${workingRpc.slice(0, 30)}...`));
     console.log();
 
   }, 3000); // 3 second refresh (was 1 second - too flickery)
 
   await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 1) * 3000));
+
+  // Cleanup
+  stdin.setRawMode(false);
+  stdin.pause();
+  stdin.removeListener('data', keyListener);
 }
 
 async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: HeartbeatManager) {
@@ -1034,7 +1071,7 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
   const bot = enabledBots.find(b => b.id === botId);
   if (!bot) return;
 
-  console.log(chalk.dim(`\nMonitoring ${bot.name}. Press Ctrl+C or wait 60 seconds to return.\n`));
+  console.log(chalk.dim(`\nMonitoring ${bot.name}. Press X to exit, or wait 60 seconds.\n`));
 
   // Get working RPC
   const workingRpc = await getWorkingRpc();
@@ -1049,11 +1086,37 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
 
   let refreshCount = 0;
   const maxRefreshes = 60;
+  let shouldExit = false;
+
+  // Setup keypress listener
+  const stdin = process.stdin;
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding('utf8');
+
+  const keyListener = (key: string) => {
+    if (key.toLowerCase() === 'x') {
+      shouldExit = true;
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', keyListener);
+    }
+  };
+  stdin.on('data', keyListener);
 
   const interval = setInterval(async () => {
+    if (shouldExit) {
+      clearInterval(interval);
+      console.log(chalk.dim('\nExiting monitor...\n'));
+      return;
+    }
+
     refreshCount++;
     if (refreshCount > maxRefreshes) {
       clearInterval(interval);
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', keyListener);
       console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
       return;
     }
@@ -1248,12 +1311,17 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
 
     // FOOTER
     console.log(chalk.dim('═'.repeat(66)));
-    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Ctrl+C to exit | Detail View`));
+    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Press X to exit | Detail View`));
     console.log();
 
   }, 3000); // 3 second refresh (was 1 second - too flickery)
 
   await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 1) * 3000));
+
+  // Cleanup
+  stdin.setRawMode(false);
+  stdin.pause();
+  stdin.removeListener('data', keyListener);
 }
 
 async function monitorStaticView(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
