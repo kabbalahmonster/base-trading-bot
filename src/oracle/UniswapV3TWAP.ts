@@ -1,7 +1,6 @@
 // src/oracle/UniswapV3TWAP.ts
 // Uniswap V3 Time-Weighted Average Price (TWAP) implementation for Base and Ethereum
 
-import chalk from 'chalk';
 import { parseAbi } from 'viem';
 import { Chain } from '../types/index.js';
 
@@ -304,15 +303,12 @@ export class UniswapV3TWAP {
           await this.sleep(delay);
           continue;
         }
-        // Only log as debug since TWAP is a fallback to Chainlink
-        if (this.isRateLimitError(error)) {
-          console.log(chalk.dim(`TWAP unavailable (rate limit) - using Chainlink only`));
-        } else if (error.message?.includes('OLD')) {
-          // Pool doesn't have enough history yet - normal for new pools
-          console.log(chalk.dim(`TWAP unavailable (pool history too new) - using Chainlink only`));
-        } else {
+        // Only log errors that matter - TWAP is a fallback to Chainlink
+        // Don't spam console with expected failures (rate limits, new pools)
+        if (!this.isRateLimitError(error) && !error.message?.includes('OLD')) {
           console.error(`Error calculating TWAP for pool ${poolAddress}:`, error.message);
         }
+        // Silently return null for rate limits and new pools - Chainlink handles it
         return null;
       }
     }
