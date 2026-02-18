@@ -876,6 +876,7 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
       choices: [
         { name: `📊 All Bots Overview (${enabledBots.length} bots)`, value: 'all' },
         { name: '🔍 Individual Bot Detail (deep dive)', value: 'single' },
+        { name: '📋 Static View (no auto-refresh)', value: 'static' },
         { name: '⬅️  Back', value: 'back' },
       ],
     },
@@ -888,8 +889,10 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
 
   if (mode === 'all') {
     await monitorAllBots(enabledBots, heartbeatManager);
-  } else {
+  } else if (mode === 'single') {
     await monitorSingleBot(enabledBots, heartbeatManager);
+  } else if (mode === 'static') {
+    await monitorStaticView(enabledBots, heartbeatManager);
   }
 }
 
@@ -1004,9 +1007,9 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
     console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Ctrl+C to exit | RPC: ${workingRpc.slice(0, 30)}...`));
     console.log();
 
-  }, 1000);
+  }, 3000); // 3 second refresh (was 1 second - too flickery)
 
-  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 2) * 1000));
+  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 1) * 3000));
 }
 
 async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: HeartbeatManager) {
@@ -1248,9 +1251,68 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
     console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Ctrl+C to exit | Detail View`));
     console.log();
 
-  }, 1000);
+  }, 3000); // 3 second refresh (was 1 second - too flickery)
 
-  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 2) * 1000));
+  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 1) * 3000));
+}
+
+async function monitorStaticView(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
+  // Static view - no auto-refresh, just show once and wait for keypress
+  console.log(chalk.cyan.bold('\n📋 Static Bot Status View\n'));
+  console.log(chalk.dim('Press Enter to return to menu...\n'));
+
+  const status = heartbeatManager.getStatus();
+  const runningBots = enabledBots.filter(b => b.isRunning).length;
+  const holdingTotal = enabledBots.reduce((acc, b) => acc + b.positions.filter(p => p.status === 'HOLDING').length, 0);
+  const totalBuys = enabledBots.reduce((acc, b) => acc + (b.totalBuys || 0), 0);
+  const totalSells = enabledBots.reduce((acc, b) => acc + (b.totalSells || 0), 0);
+  const totalProfit = enabledBots.reduce((acc, b) => acc + BigInt(b.totalProfitEth || '0'), BigInt(0));
+
+  const timestamp = new Date().toLocaleTimeString();
+  const dateStr = new Date().toLocaleDateString();
+
+  // Header
+  console.log(chalk.bgCyan.black('╔══════════════════════════════════════════════════════════════════╗'));
+  console.log(chalk.bgCyan.black(`║  🤖 BASE GRID BOT FLEET OVERVIEW          ${dateStr} ${timestamp}  ║`));
+  console.log(chalk.bgCyan.black('╚══════════════════════════════════════════════════════════════════╝'));
+  console.log();
+
+  // System Stats
+  console.log(chalk.yellow('📊 FLEET SUMMARY'));
+  console.log(chalk.yellow('═'.repeat(66)));
+  console.log(`  Fleet Status:     ${chalk.green(runningBots + ' RUNNING')} / ${enabledBots.length} bots`);
+  console.log(`  Heartbeat:        ${status.isRunning ? chalk.green('● ACTIVE') : chalk.red('○ STOPPED')}`);
+  console.log(`  Total Positions:  ${chalk.cyan(holdingTotal + ' holding')} across all bots`);
+  console.log(`  Total Trades:     ${chalk.magenta(totalBuys + ' buys')} | ${chalk.magenta(totalSells + ' sells')}`);
+  console.log(`  Total Profit:     ${chalk.green(formatEther(totalProfit) + ' ETH')}`);
+  console.log();
+
+  // Bot Summary Table
+  console.log(chalk.yellow('📈 BOT STATUS BOARD'));
+  console.log(chalk.yellow('═'.repeat(66)));
+  console.log(chalk.dim('  Name          Status   Pos    Type       Buy Config'));
+  console.log(chalk.dim('  ──────────────────────────────────────────────────────'));
+
+  for (const bot of enabledBots) {
+    const statusStr = bot.isRunning ? chalk.green('RUNNING') : chalk.gray('STOPPED');
+    const holding = bot.positions.filter(p => p.status === 'HOLDING').length;
+    const posStr = String(holding).padStart(2, ' ');
+    const typeStr = bot.config.volumeMode ? 'VOLUME' : 'GRID  ';
+    const buyConfig = bot.config.useFixedBuyAmount 
+      ? `${bot.config.buyAmount} ETH/buy`
+      : 'auto-buy';
+    const nameStr = bot.name.slice(0, 13).padEnd(13, ' ');
+
+    console.log(`  ${nameStr} ${statusStr} ${posStr}    ${typeStr} ${buyConfig}`);
+  }
+
+  console.log();
+  console.log(chalk.dim('─'.repeat(66)));
+  console.log(chalk.dim('  Static view - no auto-refresh | Press Enter to exit'));
+  console.log();
+
+  // Wait for user input
+  await inquirer.prompt([{ type: 'input', name: 'continue', message: '' }]);
 }
 
 async function viewWalletBalances(storage: JsonStorage, walletManager: WalletManager) {

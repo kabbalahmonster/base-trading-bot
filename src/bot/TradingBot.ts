@@ -4,6 +4,7 @@
  * @version 1.4.0
  */
 
+import chalk from 'chalk';
 import { WalletClient, formatEther, parseEther, createPublicClient, http, erc20Abi } from 'viem';
 import { base, mainnet } from 'viem/chains';
 import { BotInstance, Position, TradeResult, Chain } from '../types/index.js';
@@ -473,7 +474,9 @@ export class TradingBot {
         return { success: false, error: 'No quote available from 0x' };
       }
 
+      // Debug: log full quote structure
       console.log(`   Expected tokens: ${formatEther(BigInt(quote.buyAmount))}`);
+      console.log(chalk.dim(`   Quote fields: to=${quote.to?.slice(0, 20)}..., data=${quote.data?.slice(0, 20)}..., value=${quote.value}, gas=${quote.gas}, gasPrice=${quote.gasPrice}`));
 
       // Dry-run: simulate without sending
       if (this.dryRun) {
@@ -488,6 +491,18 @@ export class TradingBot {
       }
 
       console.log(`   Executing transaction...`);
+
+      // Validate quote fields before using
+      if (!quote.to || !quote.data || quote.value === undefined || quote.gas === undefined || quote.gasPrice === undefined) {
+        console.error('   Quote missing required fields:', {
+          to: !!quote.to,
+          data: !!quote.data,
+          value: quote.value,
+          gas: quote.gas,
+          gasPrice: quote.gasPrice,
+        });
+        return { success: false, error: 'Invalid quote from 0x - missing transaction data' };
+      }
 
       // Send transaction
       const txHash = await (this.walletClient as any).sendTransaction({
@@ -609,6 +624,17 @@ export class TradingBot {
         console.log(`   ✓ Approval confirmed`);
       } else {
         console.log(`   ✓ Sufficient allowance already granted`);
+      }
+
+      // Validate quote fields before using
+      if (!quote.to || !quote.data || quote.gas === undefined || quote.gasPrice === undefined) {
+        console.error('   Sell quote missing required fields:', {
+          to: !!quote.to,
+          data: !!quote.data,
+          gas: quote.gas,
+          gasPrice: quote.gasPrice,
+        });
+        return { success: false, error: 'Invalid sell quote from 0x - missing transaction data' };
       }
 
       console.log(`   Executing sell transaction...`);
