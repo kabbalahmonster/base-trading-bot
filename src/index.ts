@@ -906,8 +906,13 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
       return;
     }
 
-    // Clear screen
-    console.log('\x1Bc');
+    // Move cursor to top instead of clearing (prevents flickering)
+    // Only clear on first run, then just overwrite
+    if (refreshCount === 1) {
+      console.log('\x1Bc'); // Clear on first run only
+    } else {
+      process.stdout.write('\x1B[0f'); // Move to top-left without clear
+    }
 
     const timestamp = new Date().toLocaleTimeString();
     const dateStr = new Date().toLocaleDateString();
@@ -1046,8 +1051,12 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
       return;
     }
 
-    // Clear screen
-    console.log('\x1Bc');
+    // Move cursor to top instead of clearing (prevents flickering)
+    if (refreshCount === 1) {
+      console.log('\x1Bc'); // Clear on first run only
+    } else {
+      process.stdout.write('\x1B[0f'); // Move to top-left without clear
+    }
 
     const timestamp = new Date().toLocaleTimeString();
 
