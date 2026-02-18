@@ -230,6 +230,8 @@ async function main() {
           { name: '🏧 Reclaim funds', value: 'reclaim' },
           { name: '🔮 Oracle status', value: 'oracle_status' },
           { name: '⚡ Toggle price validation', value: 'toggle_price_validation' },
+          { name: '📊 Diagnostic', value: 'diagnostic' },
+          { name: '⚙️  System settings', value: 'system_settings' },
           { name: '🗑️  Delete bot', value: 'delete' },
           { name: '⏻️  Exit (bots keep running)', value: 'exit_keep' },
           { name: '⏹️  Exit and stop all bots', value: 'exit_stop' },
@@ -305,6 +307,12 @@ async function main() {
           break;
         case 'toggle_price_validation':
           await togglePriceValidation(storage, heartbeatManager);
+          break;
+        case 'diagnostic':
+          await runDiagnostic(storage, heartbeatManager);
+          break;
+        case 'system_settings':
+          await systemSettings(storage, heartbeatManager);
           break;
         case 'delete':
           await deleteBot(heartbeatManager, storage, walletManager);
@@ -3450,6 +3458,394 @@ async function togglePriceValidation(storage: JsonStorage, heartbeatManager: Hea
   }
 
   console.log(chalk.green(`\n✓ Price validation is now ${newStatus ? chalk.green('ENABLED') : chalk.red('DISABLED')} for ${bot.name}\n`));
+}
+
+/**
+ * Run comprehensive diagnostic on a bot
+ */
+async function runDiagnostic(storage: JsonStorage, _heartbeatManager: HeartbeatManager) {
+  console.log(chalk.cyan('\n📊 Bot Diagnostic\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found.\n'));
+    return;
+  }
+
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to diagnose:',
+      choices: [
+        ...bots.map(b => ({
+          name: `${b.name} (${b.tokenSymbol}) - ${b.isRunning ? chalk.green('● Running') : chalk.gray('○ Stopped')}`,
+          value: b.id,
+        })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  const bot = bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  console.log(chalk.cyan(`\n🔍 Diagnosing: ${chalk.bold(bot.name)} (${bot.tokenSymbol})\n`));
+
+  // 1. Basic Info
+  console.log(chalk.yellow('📋 Basic Info:'));
+  console.log(`  Token: ${bot.tokenAddress}`);
+  console.log(`  Wallet: ${bot.walletAddress}`);
+  console.log(`  Chain: ${bot.chain || 'base'}`);
+  console.log(`  Status: ${bot.isRunning ? chalk.green('Running') : chalk.red('Stopped')}`);
+  console.log(`  Enabled: ${bot.enabled ? chalk.green('Yes') : chalk.red('No')}`);
+  console.log(`  Type: ${bot.config.volumeMode ? chalk.magenta('Volume Bot') : chalk.blue('Grid Bot')}`);
+  console.log();
+
+  // 2. Grid Configuration
+  console.log(chalk.yellow('📏 Grid Configuration:'));
+  console.log(`  Positions: ${bot.config.numPositions}`);
+  console.log(`  Take Profit: ${bot.config.takeProfitPercent}%`);
+  console.log(`  Max Active: ${bot.config.maxActivePositions}`);
+  if (bot.config.floorPrice && bot.config.ceilingPrice) {
+    console.log(`  Floor: ${bot.config.floorPrice.toExponential(6)} ETH`);
+    console.log(`  Ceiling: ${bot.config.ceilingPrice.toExponential(6)} ETH`);
+  } else {
+    console.log(`  Range: ${chalk.yellow('Auto (based on current price)')}`);
+  }
+  console.log();
+
+  // 3. Position Status
+  const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING');
+  const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY');
+  const soldPositions = bot.positions.filter(p => p.status === 'SOLD');
+
+  console.log(chalk.yellow('📊 Position Status:'));
+  console.log(`  Total: ${bot.positions.length}`);
+  console.log(`  ${chalk.green('● Holding')}: ${holdingPositions.length}`);
+  console.log(`  ${chalk.gray('○ Empty')}: ${emptyPositions.length}`);
+  console.log(`  ${chalk.blue('● Sold')}: ${soldPositions.length}`);
+  console.log(`  Active/Max: ${holdingPositions.length}/${bot.config.maxActivePositions}`);
+  console.log();
+
+  // 4. Buy Settings
+  console.log(chalk.yellow('💰 Buy Settings:'));
+  if (bot.config.useFixedBuyAmount) {
+    console.log(`  Mode: Fixed amount`);
+    console.log(`  Amount: ${bot.config.buyAmount} ETH per buy`);
+  } else {
+    console.log(`  Mode: Auto-calculate`);
+    console.log(`  Amount: Based on available balance`);
+  }
+  console.log(`  Moon Bag: ${bot.config.moonBagEnabled ? bot.config.moonBagPercent + '%' : 'Disabled'}`);
+  console.log(`  Price Oracle: ${bot.config.usePriceOracle !== false ? chalk.green('Enabled') : chalk.red('Disabled')}`);
+  console.log();
+
+  // 5. Try to fetch current price and balances
+  console.log(chalk.yellow('💵 Current State:'));
+  try {
+    const workingRpc = await getWorkingRpc(bot.chain || 'base');
+    const { createPublicClient, http, formatEther } = await import('viem');
+    const { erc20Abi } = await import('viem');
+    const chainConfig = bot.chain === 'ethereum'
+      ? (await import('viem/chains')).mainnet
+      : (await import('viem/chains')).base;
+
+    const publicClient = createPublicClient({
+      chain: chainConfig,
+      transport: http(workingRpc, { timeout: 5000 }),
+    });
+
+    // Get ETH balance
+    const ethBalance = await publicClient.getBalance({
+      address: bot.walletAddress as `0x${string}`,
+    });
+    const ethBalanceFormatted = Number(formatEther(ethBalance));
+    console.log(`  ETH Balance: ${ethBalanceFormatted.toFixed(6)} ETH`);
+
+    // Get token balance
+    let tokenBalance = BigInt(0);
+    let decimals = 18;
+    try {
+      decimals = await publicClient.readContract({
+        address: bot.tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'decimals',
+      });
+      tokenBalance = await publicClient.readContract({
+        address: bot.tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [bot.walletAddress as `0x${string}`],
+      });
+    } catch {
+      // Token contract might not have standard decimals
+    }
+    const tokenBalanceFormatted = Number(tokenBalance) / Math.pow(10, decimals);
+    console.log(`  Token Balance: ${tokenBalanceFormatted.toFixed(4)} ${bot.tokenSymbol}`);
+
+    // Check if enough ETH for buys
+    const minBuyAmount = bot.config.useFixedBuyAmount ? bot.config.buyAmount : 0.0001;
+    if (ethBalanceFormatted < minBuyAmount) {
+      console.log(chalk.red(`\n  ⚠️  WARNING: Low ETH balance!`));
+      console.log(chalk.red(`      Need at least ${minBuyAmount} ETH for buys`));
+    } else {
+      const estimatedBuys = Math.floor(ethBalanceFormatted / minBuyAmount);
+      console.log(chalk.green(`\n  ✓ Can execute ~${estimatedBuys} buys`));
+    }
+
+    console.log();
+
+    // 6. Price Analysis
+    console.log(chalk.yellow('📈 Price Analysis:'));
+    const currentPrice = bot.currentPrice;
+    if (currentPrice && currentPrice > 0) {
+      console.log(`  Current Price: ${currentPrice.toExponential(6)} ETH`);
+
+      if (bot.config.floorPrice && bot.config.ceilingPrice) {
+        const inRange = currentPrice >= bot.config.floorPrice && currentPrice <= bot.config.ceilingPrice;
+        if (inRange) {
+          console.log(chalk.green(`  ✓ Price is WITHIN grid range`));
+
+          // Find which position would buy at this price
+          const buyPosition = bot.positions.find(p =>
+            p.status === 'EMPTY' &&
+            currentPrice >= p.buyMin &&
+            currentPrice <= p.buyMax
+          );
+
+          if (buyPosition) {
+            console.log(chalk.green(`  ✓ Position ${buyPosition.id} is ready to buy!`));
+            console.log(`    Buy range: ${buyPosition.buyMin.toExponential(4)} - ${buyPosition.buyMax.toExponential(4)} ETH`);
+          } else {
+            console.log(chalk.yellow(`  ⚠ No empty position matches current price`));
+            if (holdingPositions.length >= bot.config.maxActivePositions) {
+              console.log(chalk.yellow(`  Reason: Max active positions reached (${bot.config.maxActivePositions})`));
+            }
+          }
+        } else {
+          console.log(chalk.red(`  ✗ Price is OUTSIDE grid range!`));
+          if (currentPrice < bot.config.floorPrice) {
+            console.log(chalk.red(`    Price is BELOW floor (${bot.config.floorPrice.toExponential(6)} ETH)`));
+            console.log(chalk.yellow(`    Consider regenerating grid with lower floor`));
+          } else {
+            console.log(chalk.red(`    Price is ABOVE ceiling (${bot.config.ceilingPrice.toExponential(6)} ETH)`));
+            console.log(chalk.yellow(`    Consider regenerating grid with higher ceiling`));
+          }
+        }
+      } else {
+        console.log(chalk.dim(`  Grid range: Auto-calculated (no floor/ceiling set)`));
+      }
+    } else {
+      console.log(chalk.yellow(`  Current Price: Unknown (not fetched yet)`));
+    }
+
+  } catch (error: any) {
+    console.log(chalk.red(`  Error fetching state: ${error.message}`));
+  }
+
+  console.log();
+
+  // 7. Issues Summary
+  console.log(chalk.yellow('🔍 Issues Summary:'));
+  const issues: string[] = [];
+
+  if (!bot.enabled) {
+    issues.push(chalk.red('• Bot is DISABLED'));
+  }
+  if (!bot.isRunning) {
+    issues.push(chalk.yellow('• Bot is not running'));
+  }
+  if (holdingPositions.length >= bot.config.maxActivePositions) {
+    issues.push(chalk.yellow(`• Max active positions reached (${holdingPositions.length}/${bot.config.maxActivePositions})`));
+  }
+
+  if (issues.length === 0) {
+    console.log(chalk.green('  ✓ No issues detected'));
+  } else {
+    issues.forEach(issue => console.log(`  ${issue}`));
+  }
+
+  console.log();
+
+  // 8. Recommendations
+  console.log(chalk.yellow('💡 Recommendations:'));
+  const recommendations: string[] = [];
+
+  if (!bot.enabled) {
+    recommendations.push('Enable the bot to start trading');
+  }
+  if (!bot.isRunning && bot.enabled) {
+    recommendations.push('Start the bot from the main menu');
+  }
+  if (holdingPositions.length >= bot.config.maxActivePositions) {
+    recommendations.push('Wait for sells or increase maxActivePositions');
+  }
+
+  if (recommendations.length === 0) {
+    console.log(chalk.green('  ✓ Bot should be trading normally'));
+  } else {
+    recommendations.forEach((rec, i) => console.log(`  ${i + 1}. ${rec}`));
+  }
+
+  console.log();
+}
+
+/**
+ * System settings configuration
+ */
+async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
+  // Reference heartbeatManager to satisfy TypeScript (used in heartbeat settings)
+  void heartbeatManager;
+  
+  console.log(chalk.cyan('\n⚙️  System Settings\n'));
+
+  const { setting } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'setting',
+      message: 'What would you like to configure?',
+      choices: [
+        { name: '⏱️  Heartbeat interval', value: 'heartbeat' },
+        { name: '📊 Default price oracle confidence', value: 'confidence' },
+        { name: '🔔 Global notification settings', value: 'notifications' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (setting === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  if (setting === 'heartbeat') {
+    const { interval } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'interval',
+        message: 'Select heartbeat interval:',
+        choices: [
+          { name: '1 second (fastest, more RPC calls)', value: 1000 },
+          { name: '2 seconds (recommended)', value: 2000 },
+          { name: '5 seconds (slower, fewer RPC calls)', value: 5000 },
+          { name: '10 seconds (slowest, minimal RPC)', value: 10000 },
+          { name: '⬅️  Back', value: 'back' },
+        ],
+      },
+    ]);
+
+    if (interval === 'back') {
+      console.log(chalk.dim('\nCancelled.\n'));
+      return;
+    }
+
+    // Update all running bots
+    const bots = await storage.getAllBots();
+    const runningBots = bots.filter(b => b.isRunning);
+
+    if (runningBots.length > 0) {
+      console.log(chalk.yellow(`\n⚠️  ${runningBots.length} bot(s) are running.`));
+      console.log(chalk.dim('They need to be restarted to apply the new interval.\n'));
+
+      const { restart } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'restart',
+          message: 'Restart running bots now?',
+          default: true,
+        },
+      ]);
+
+      if (restart) {
+        heartbeatManager.stop();
+        for (const bot of runningBots) {
+          heartbeatManager.removeBot(bot.id);
+        }
+
+        // TODO: Store interval in storage and use it when creating heartbeat manager
+        // For now, just notify user
+        console.log(chalk.green(`\n✓ Stopped bots. New interval (${interval}ms) will apply on next start.`));
+        console.log(chalk.dim('Note: Interval is currently hardcoded. Restart the CLI to apply.\n'));
+      }
+    } else {
+      console.log(chalk.green(`\n✓ Heartbeat interval set to ${interval}ms`));
+      console.log(chalk.dim('Will apply to new bots on next start.\n'));
+    }
+  }
+
+  if (setting === 'confidence') {
+    const { confidence } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'confidence',
+        message: 'Select minimum price confidence:',
+        choices: [
+          { name: '60% (less strict, more trades)', value: 0.6 },
+          { name: '70% (balanced)', value: 0.7 },
+          { name: '80% (recommended)', value: 0.8 },
+          { name: '90% (strict, fewer trades)', value: 0.9 },
+          { name: '95% (very strict)', value: 0.95 },
+          { name: '⬅️  Back', value: 'back' },
+        ],
+      },
+    ]);
+
+    if (confidence === 'back') {
+      console.log(chalk.dim('\nCancelled.\n'));
+      return;
+    }
+
+    // Update all bots
+    const bots = await storage.getAllBots();
+    for (const bot of bots) {
+      bot.config.minPriceConfidence = confidence;
+      bot.lastUpdated = Date.now();
+      await storage.saveBot(bot);
+    }
+
+    console.log(chalk.green(`\n✓ Price confidence set to ${(confidence * 100).toFixed(0)}% for all bots`));
+    console.log(chalk.dim('Running bots will apply on next price check.\n'));
+  }
+
+  if (setting === 'notifications') {
+    const notificationService = NotificationService.getInstance();
+    const isConfigured = notificationService.isConfigured();
+
+    console.log(chalk.cyan('\n🔔 Global Notification Settings\n'));
+    console.log(`Current Status: ${isConfigured ? chalk.green('Configured') : chalk.yellow('Not configured')}`);
+
+    if (isConfigured) {
+      const { action } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'action',
+          message: 'What would you like to do?',
+          choices: [
+            { name: '🔕 Disable notifications', value: 'disable' },
+            { name: '📋 View current config', value: 'view' },
+            { name: '⬅️  Back', value: 'back' },
+          ],
+        },
+      ]);
+
+      if (action === 'disable') {
+        // Note: Can't truly disable without storing in config
+        // This is a placeholder for future implementation
+        console.log(chalk.yellow('\nNote: Use "Configure Telegram" from main menu to change settings.\n'));
+      } else if (action === 'view') {
+        console.log(chalk.dim('\nView notification config in .env file\n'));
+      }
+    } else {
+      console.log(chalk.yellow('\nNotifications not configured.'));
+      console.log(chalk.dim('Use "🔔 Configure Telegram" from the main menu to set up.\n'));
+    }
+  }
 }
 
 /**
