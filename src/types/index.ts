@@ -79,7 +79,7 @@ export interface GridConfig {
   useFixedBuyAmount: boolean;
 
   // Price Oracle settings
-  /** Enable Chainlink + Uniswap TWAP validation (default: true) */
+  /** Enable Chainlink + Uniswap TWAP validation (default: false) */
   usePriceOracle?: boolean;
   /** Minimum price confidence 0-1 (default: 0.8 = 80%) */
   minPriceConfidence?: number;

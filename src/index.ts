@@ -3412,7 +3412,7 @@ async function togglePriceValidation(storage: JsonStorage, heartbeatManager: Hea
   const bot = bots.find(b => b.id === botId);
   if (!bot) return;
 
-  const currentStatus = bot.config.usePriceOracle !== false; // Default to true
+  const currentStatus = bot.config.usePriceOracle === true; // Default to false (disabled)
   const newStatus = !currentStatus;
 
   console.log(chalk.yellow(`\n${currentStatus ? 'Disabling' : 'Enabling'} price validation for ${bot.name}`));

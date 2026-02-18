@@ -82,9 +82,15 @@ export class TradingBot {
     this.rpcUrl = rpcUrl;
     this.chain = instance.chain ?? 'base';
     this.pnLTracker = pnLTracker || null;
-    // Use config setting if provided, otherwise fall back to parameter
-    this.oracleValidationEnabled = instance.config.usePriceOracle !== undefined ? instance.config.usePriceOracle : enablePriceOracle;
+    // Price validation DISABLED by default - using 0x quotes only
+    // User can enable via config if they want oracle validation
+    this.oracleValidationEnabled = instance.config.usePriceOracle === true;
     this.minPriceConfidence = instance.config.minPriceConfidence ?? 0.8;
+    
+    // Prevent unused parameter warning (legacy compatibility)
+    if (enablePriceOracle && !this.oracleValidationEnabled) {
+      // Parameter requested oracle but config disables it - config wins
+    }
     
     // Update 0x API chain to match bot chain
     this.zeroXApi.setChain(this.chain);
@@ -305,21 +311,26 @@ export class TradingBot {
         console.log(`   Moon bag: Keeping ${formatEther(moonBagAmount)} tokens`);
       }
 
-      // Check profitability
-      const { profitable, quote, actualProfit } = await this.zeroXApi.isProfitable(
+      // Check profitability with STRICT 2% minimum guarantee
+      // Requires: ETH received >= (buy cost + gas) * 1.02
+      const { profitable, quote, actualProfit, strictCheck } = await this.zeroXApi.isProfitable(
         this.instance.tokenAddress,
         sellAmount,
         position.ethCost || '0',
         this.instance.config.minProfitPercent,
-        this.instance.walletAddress
+        this.instance.walletAddress,
+        true // strict mode enabled
       );
 
       if (!profitable || !quote) {
-        console.log(`   ⏸ Not profitable yet: ${actualProfit.toFixed(2)}% (need ${this.instance.config.minProfitPercent}%)`);
+        const reason = strictCheck === false 
+          ? `fails strict 2% minimum (need >= (cost + gas) * 1.02)`
+          : `not profitable yet`;
+        console.log(`   ⏸ Sell skipped: ${reason} (current: ${actualProfit.toFixed(2)}%)`);
         continue;
       }
 
-      console.log(`   Profit: ${actualProfit.toFixed(2)}% - Executing sell...`);
+      console.log(`   ✅ Meets strict 2% profit requirement - Executing sell...`);
 
       // Execute sell
       const result = await this.executeSell(position, sellAmount, quote);
