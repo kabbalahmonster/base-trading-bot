@@ -67,6 +67,25 @@ cp .env.example .env
 nano .env
 ```
 
+### ⚠️ Important: RPC Configuration
+
+**For production use, use a private RPC endpoint.** Public RPCs (like `mainnet.base.org`) have strict rate limits (429 errors) which can cause:
+- Oracle price fetching delays
+- Failed transactions
+- Bot performance issues
+
+**Recommended Free RPC Providers:**
+- **Alchemy**: alchemy.com (free tier: 300M compute units/month)
+- **Infura**: infura.io (free tier: 100k requests/day)
+- **QuickNode**: quicknode.com (free trial available)
+- **Ankr**: ankr.com (free tier available)
+
+**Example .env:**
+```bash
+BASE_RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY
+ETH_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+```
+
 ---
 
 ## ✨ Features
