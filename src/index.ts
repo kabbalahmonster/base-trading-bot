@@ -232,6 +232,7 @@ async function main() {
           { name: '⚡ Toggle price validation', value: 'toggle_price_validation' },
           { name: '📊 Diagnostic', value: 'diagnostic' },
           { name: '⚙️  System settings', value: 'system_settings' },
+          { name: '🧮 View grid positions', value: 'view_grid' },
           { name: '🗑️  Delete bot', value: 'delete' },
           { name: '⏻️  Exit (bots keep running)', value: 'exit_keep' },
           { name: '⏹️  Exit and stop all bots', value: 'exit_stop' },
@@ -313,6 +314,9 @@ async function main() {
           break;
         case 'system_settings':
           await systemSettings(storage, heartbeatManager);
+          break;
+        case 'view_grid':
+          await viewGridPositions(storage);
           break;
         case 'delete':
           await deleteBot(heartbeatManager, storage, walletManager);
@@ -3855,6 +3859,178 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
       console.log(chalk.dim('Use "🔔 Configure Telegram" from the main menu to set up.\n'));
     }
   }
+}
+
+/**
+ * View complete grid positions for a bot
+ */
+async function viewGridPositions(storage: JsonStorage) {
+  console.log(chalk.cyan('\n🧮 View Grid Positions\n'));
+
+  const bots = await storage.getAllBots();
+  if (bots.length === 0) {
+    console.log(chalk.yellow('No bots found.\n'));
+    return;
+  }
+
+  const { botId } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'botId',
+      message: 'Select bot to view grid:',
+      choices: [
+        ...bots.map(b => ({
+          name: `${b.name} (${b.tokenSymbol}) - ${b.positions.length} positions`,
+          value: b.id,
+        })),
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+
+  if (botId === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+
+  const bot = bots.find(b => b.id === botId);
+  if (!bot) return;
+
+  console.log(chalk.cyan(`\n📊 ${chalk.bold(bot.name)} - Complete Grid Overview\n`));
+  
+  // Bot Summary
+  console.log(chalk.yellow('Bot Configuration:'));
+  console.log(`  Token: ${bot.tokenSymbol} (${bot.tokenAddress})`);
+  console.log(`  Total Positions: ${bot.config.numPositions}`);
+  console.log(`  Take Profit: ${bot.config.takeProfitPercent}%`);
+  console.log(`  Max Active: ${bot.config.maxActivePositions}`);
+  if (bot.config.floorPrice && bot.config.ceilingPrice) {
+    console.log(`  Floor: ${bot.config.floorPrice.toExponential(6)} ETH`);
+    console.log(`  Ceiling: ${bot.config.ceilingPrice.toExponential(6)} ETH`);
+  }
+  console.log();
+
+  // Current Price
+  if (bot.currentPrice && bot.currentPrice > 0) {
+    console.log(chalk.yellow('Current Market:'));
+    console.log(`  Price: ${bot.currentPrice.toExponential(6)} ETH`);
+    console.log();
+  }
+
+  // Sort positions by buy price (highest first)
+  const sortedPositions = [...bot.positions].sort((a, b) => b.buyPrice - a.buyPrice);
+
+  // Full Position Table
+  console.log(chalk.yellow('All Positions (sorted by buy price, highest first):'));
+  console.log(chalk.dim('─'.repeat(100)));
+  console.log(
+    chalk.dim(
+      '  ID  '.padEnd(6) +
+      'Status    '.padEnd(10) +
+      'Buy Range (ETH)          '.padEnd(26) +
+      'Buy@        '.padEnd(12) +
+      'Sell@       '.padEnd(12) +
+      'Tokens      '.padEnd(14) +
+      'ETH Cost'
+    )
+  );
+  console.log(chalk.dim('─'.repeat(100)));
+
+  for (const pos of sortedPositions) {
+    const id = String(pos.id).padStart(3, ' ').padEnd(6, ' ');
+    
+    let status: string;
+    let statusColor: (s: string) => string;
+    switch (pos.status) {
+      case 'HOLDING':
+        status = 'HOLDING';
+        statusColor = chalk.green;
+        break;
+      case 'SOLD':
+        status = 'SOLD  ';
+        statusColor = chalk.blue;
+        break;
+      default:
+        status = 'EMPTY ';
+        statusColor = chalk.gray;
+    }
+
+    const buyRange = `${pos.buyMin.toExponential(3)}-${pos.buyMax.toExponential(3)}`.padEnd(25, ' ');
+    const buyAt = pos.buyPrice.toExponential(4).padEnd(12, ' ');
+    const sellAt = pos.sellPrice.toExponential(4).padEnd(12, ' ');
+    
+    const tokens = pos.tokensReceived 
+      ? (Number(pos.tokensReceived) / 1e18).toFixed(4).padEnd(14, ' ')
+      : chalk.gray('-'.padEnd(14, ' '));
+    
+    const ethCost = pos.ethCost 
+      ? (Number(pos.ethCost) / 1e18).toFixed(6).padEnd(10, ' ')
+      : chalk.gray('-'.padEnd(10, ' '));
+
+    // Highlight positions near current price
+    let highlight = '';
+    if (bot.currentPrice && pos.status === 'EMPTY') {
+      if (bot.currentPrice >= pos.buyMin && bot.currentPrice <= pos.buyMax) {
+        highlight = chalk.yellow(' ← CURRENT PRICE IN RANGE');
+      }
+    }
+
+    console.log(`  ${id}${statusColor(status)} ${buyRange} ${buyAt} ${sellAt} ${tokens} ${ethCost}${highlight}`);
+  }
+
+  console.log(chalk.dim('─'.repeat(100)));
+  console.log();
+
+  // Position Summary
+  const holding = bot.positions.filter(p => p.status === 'HOLDING');
+  const sold = bot.positions.filter(p => p.status === 'SOLD');
+  const empty = bot.positions.filter(p => p.status === 'EMPTY');
+
+  console.log(chalk.yellow('Position Summary:'));
+  console.log(`  ${chalk.green('HOLDING')}: ${holding.length} positions`);
+  console.log(`  ${chalk.gray('EMPTY')}: ${empty.length} positions`);
+  console.log(`  ${chalk.blue('SOLD')}: ${sold.length} positions`);
+  console.log();
+
+  // Holding positions detail
+  if (holding.length > 0) {
+    console.log(chalk.yellow('Holding Positions Detail:'));
+    for (const pos of holding) {
+      const tokens = pos.tokensReceived ? (Number(pos.tokensReceived) / 1e18).toFixed(6) : '0';
+      const cost = pos.ethCost ? (Number(pos.ethCost) / 1e18).toFixed(6) : '0';
+      const buyDate = pos.buyTimestamp ? new Date(pos.buyTimestamp).toLocaleDateString() : 'Unknown';
+      
+      console.log(`  Position ${pos.id}:`);
+      console.log(`    Tokens: ${tokens} ${bot.tokenSymbol}`);
+      console.log(`    Cost: ${cost} ETH @ ${pos.buyPrice.toExponential(6)} ETH/token`);
+      console.log(`    Target Sell: ${pos.sellPrice.toExponential(6)} ETH/token`);
+      console.log(`    Buy Date: ${buyDate}`);
+      if (pos.buyTxHash) {
+        console.log(`    TX: ${pos.buyTxHash.slice(0, 20)}...`);
+      }
+      console.log();
+    }
+  }
+
+  // Next actions
+  console.log(chalk.yellow('Next Actions:'));
+  const nextBuy = empty
+    .filter(p => !bot.currentPrice || p.buyMax < bot.currentPrice)
+    .sort((a, b) => b.buyPrice - a.buyPrice)[0];
+  
+  const nextSell = holding
+    .sort((a, b) => a.sellPrice - b.sellPrice)[0];
+
+  if (nextBuy) {
+    console.log(`  Next Buy: Position ${nextBuy.id} @ ${nextBuy.buyMin.toExponential(4)}-${nextBuy.buyMax.toExponential(4)} ETH`);
+  }
+  if (nextSell) {
+    console.log(`  Next Sell: Position ${nextSell.id} @ ${nextSell.sellPrice.toExponential(4)} ETH`);
+  }
+  if (!nextBuy && !nextSell) {
+    console.log('  No pending actions');
+  }
+  console.log();
 }
 
 /**
