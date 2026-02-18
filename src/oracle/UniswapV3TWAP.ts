@@ -307,6 +307,9 @@ export class UniswapV3TWAP {
         // Only log as debug since TWAP is a fallback to Chainlink
         if (this.isRateLimitError(error)) {
           console.log(chalk.dim(`TWAP unavailable (rate limit) - using Chainlink only`));
+        } else if (error.message?.includes('OLD')) {
+          // Pool doesn't have enough history yet - normal for new pools
+          console.log(chalk.dim(`TWAP unavailable (pool history too new) - using Chainlink only`));
         } else {
           console.error(`Error calculating TWAP for pool ${poolAddress}:`, error.message);
         }

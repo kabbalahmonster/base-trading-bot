@@ -619,21 +619,46 @@ async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage
     return;
   }
 
+  // Track which bots we're starting
+  const botsToStart: typeof enabledBots = [];
+  
   if (botId === 'all') {
     for (const bot of enabledBots) {
       if (!bot.isRunning) {
+        botsToStart.push(bot);
         await heartbeatManager.addBot(bot);
       }
     }
   } else {
     const bot = enabledBots.find(b => b.id === botId);
     if (bot && !bot.isRunning) {
+      botsToStart.push(bot);
       await heartbeatManager.addBot(bot);
     }
   }
 
   heartbeatManager.start();
-  console.log(chalk.green('\n✓ Bot(s) started\n'));
+  
+  // Show clean success message
+  console.log(chalk.green('\n✅ Bot(s) started successfully!\n'));
+  
+  if (botsToStart.length > 0) {
+    console.log(chalk.cyan('📊 Started:'));
+    for (const bot of botsToStart) {
+      const botType = bot.config.volumeMode ? chalk.magenta('[VOLUME]') : chalk.blue('[GRID]');
+      const buyInfo = bot.config.volumeMode 
+        ? `${bot.config.volumeBuysPerCycle || 3} buys/cycle`
+        : bot.config.useFixedBuyAmount 
+          ? `${bot.config.buyAmount} ETH/buy`
+          : 'auto-buy';
+      console.log(`   ${botType} ${chalk.bold(bot.name)} (${bot.tokenSymbol}) - ${buyInfo}`);
+    }
+    console.log();
+  }
+  
+  // Automatically go to monitoring view
+  console.log(chalk.dim('Opening monitoring dashboard...\n'));
+  await monitorBots(storage, heartbeatManager);
 }
 
 async function stopBot(heartbeatManager: HeartbeatManager, _storage: JsonStorage) {
