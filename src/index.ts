@@ -1230,19 +1230,31 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
       console.log();
     }
 
-    // NEXT BUY OPPORTUNITIES
+    // NEXT BUY OPPORTUNITIES - find closest empty positions to current price
     const nextBuys = emptyPositions
-      .filter(p => (p.buyMin || p.buyPrice) > bot.currentPrice)
+      .map(p => {
+        const buyMin = p.buyMin || p.buyPrice;
+        const buyMax = p.buyMax || p.buyPrice;
+        const midPrice = (buyMin + buyMax) / 2;
+        const distance = Math.abs(midPrice - bot.currentPrice);
+        return { ...p, distance, midPrice };
+      })
+      .sort((a, b) => a.distance - b.distance)
       .slice(0, 3);
 
     if (nextBuys.length > 0) {
-      console.log(chalk.yellow('  📙 NEXT BUY OPPORTUNITIES:'));
+      console.log(chalk.yellow('  📙 NEAREST EMPTY POSITIONS (Next Potential Buys):'));
       for (const pos of nextBuys) {
         const buyMin = pos.buyMin || pos.buyPrice;
         const buyMax = pos.buyMax || pos.buyPrice;
-        const dist = ((buyMin - bot.currentPrice) / bot.currentPrice * 100);
-        const distStr = dist > 0 ? chalk.yellow(`+${dist.toFixed(1)}% above current`) : chalk.green(`${dist.toFixed(1)}% below current`);
-        console.log(`     Position ${pos.id}: Buy range ${buyMin.toExponential(4)}-${buyMax.toExponential(4)} ETH (${distStr})`);
+        const distPercent = ((pos.midPrice - bot.currentPrice) / bot.currentPrice * 100);
+        const distStr = distPercent > 0
+          ? chalk.yellow(`${distPercent.toFixed(1)}% above current`)
+          : chalk.green(`${Math.abs(distPercent).toFixed(1)}% below current`);
+        const inRange = bot.currentPrice >= buyMin && bot.currentPrice <= buyMax
+          ? chalk.green(' ← CURRENTLY IN RANGE!')
+          : '';
+        console.log(`     Position ${pos.id}: ${buyMin.toExponential(4)}-${buyMax.toExponential(4)} ETH (${distStr})${inRange}`);
       }
       console.log();
     }
