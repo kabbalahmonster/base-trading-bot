@@ -269,8 +269,8 @@ async function main() {
       console.log(chalk.cyan('\n👋 Exiting CLI. Bots continue running in background.\n'));
       console.log(chalk.dim('To stop bots later, restart and select "Exit and stop all bots"\n'));
       // Don't stop heartbeat manager - let bots keep running
-      process.exitCode = 0;
-      return;
+      // Use process.exit to immediately exit without running cleanup code
+      process.exit(0);
     }
     
     if (action === 'exit_stop') {
