@@ -1071,8 +1071,6 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
   const bot = enabledBots.find(b => b.id === botId);
   if (!bot) return;
 
-  console.log(chalk.dim(`\nMonitoring ${bot.name}. Press X to exit, or wait 60 seconds.\n`));
-
   // Get working RPC
   const workingRpc = await getWorkingRpc();
   const { createPublicClient, http, formatEther, formatUnits } = await import('viem');
@@ -1084,9 +1082,10 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
     transport: http(workingRpc),
   });
 
+  let autoRefresh = false;
   let refreshCount = 0;
-  const maxRefreshes = 60;
   let shouldExit = false;
+  let refreshInterval: NodeJS.Timeout | null = null;
 
   // Setup keypress listener
   const stdin = process.stdin;
@@ -1094,47 +1093,23 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
   stdin.resume();
   stdin.setEncoding('utf8');
 
-  const keyListener = (key: string) => {
-    if (key.toLowerCase() === 'x') {
-      shouldExit = true;
-      stdin.setRawMode(false);
-      stdin.pause();
-      stdin.removeListener('data', keyListener);
-    }
-  };
-  stdin.on('data', keyListener);
-
-  const interval = setInterval(async () => {
-    if (shouldExit) {
-      clearInterval(interval);
-      console.log(chalk.dim('\nExiting monitor...\n'));
-      return;
-    }
-
-    refreshCount++;
-    if (refreshCount > maxRefreshes) {
-      clearInterval(interval);
-      stdin.setRawMode(false);
-      stdin.pause();
-      stdin.removeListener('data', keyListener);
-      console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
-      return;
-    }
-
-    // Move cursor to top instead of clearing (prevents flickering)
-    if (refreshCount === 1) {
-      console.log('\x1Bc'); // Clear on first run only
-    } else {
-      process.stdout.write('\x1B[0f'); // Move to top-left without clear
-    }
-
+  const displayBot = async () => {
     const timestamp = new Date().toLocaleTimeString();
+    refreshCount++;
+
+    // Clear screen
+    console.log('\x1Bc');
 
     // Header with bot name
     const headerLine = `🔍 ${bot.name.toUpperCase()} - ${bot.tokenSymbol}`;
     console.log(chalk.bgMagenta.black('╔══════════════════════════════════════════════════════════════════╗'));
     console.log(chalk.bgMagenta.black(`║  ${headerLine.padEnd(62)} ${timestamp} ║`));
     console.log(chalk.bgMagenta.black('╚══════════════════════════════════════════════════════════════════╝'));
+    console.log();
+
+    // Controls hint
+    console.log(chalk.dim('  Controls: [R] Refresh  [A] Toggle Auto-refresh  [X] Exit'));
+    console.log(chalk.yellow(`  Auto-refresh: ${autoRefresh ? 'ON' : 'OFF'}`));
     console.log();
 
     // Status Banner
@@ -1208,7 +1183,7 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
     // GRID POSITIONS SECTION
     const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING').sort((a, b) => (b.buyMax || b.buyPrice) - (a.buyMax || a.buyPrice));
     const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY').sort((a, b) => (b.buyMax || b.buyPrice) - (a.buyMax || a.buyPrice));
-    const soldPositions = bot.positions.filter(p => p.status === 'SOLD').slice(-5); // Last 5 sold
+    const soldPositions = bot.positions.filter(p => p.status === 'SOLD').slice(-5);
 
     console.log(chalk.cyan('🎯 GRID POSITIONS'));
     console.log(chalk.cyan('─'.repeat(66)));
@@ -1221,7 +1196,7 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
       console.log(chalk.dim('     ID  Buy Range              Buy@        Sell@        Tokens       Profit %'));
       console.log(chalk.dim('     ──────────────────────────────────────────────────────────────────────────'));
 
-      for (const pos of holdingPositions.slice(0, 5)) { // Show top 5
+      for (const pos of holdingPositions.slice(0, 5)) {
         const buyMax = pos.buyMax || pos.buyPrice;
         const buyMin = pos.buyMin || buyMax;
         const profit = ((pos.sellPrice - buyMax) / buyMax * 100);
@@ -1311,17 +1286,48 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
 
     // FOOTER
     console.log(chalk.dim('═'.repeat(66)));
-    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Press X to exit | Detail View`));
+    console.log(chalk.dim(`  Refresh #${refreshCount} | Press R to refresh | A to toggle auto | X to exit`));
     console.log();
+  };
 
-  }, 3000); // 3 second refresh (was 1 second - too flickery)
+  // Initial display
+  await displayBot();
 
-  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 1) * 3000));
+  const keyListener = (key: string) => {
+    const lowerKey = key.toLowerCase();
+    
+    if (lowerKey === 'x') {
+      shouldExit = true;
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', keyListener);
+      console.log(chalk.dim('\nExiting monitor...\n'));
+    } else if (lowerKey === 'r') {
+      // Manual refresh
+      displayBot();
+    } else if (lowerKey === 'a') {
+      // Toggle auto-refresh
+      autoRefresh = !autoRefresh;
+      if (autoRefresh) {
+        refreshInterval = setInterval(displayBot, 3000);
+      } else if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
+      displayBot(); // Show updated status
+    }
+  };
 
-  // Cleanup
-  stdin.setRawMode(false);
-  stdin.pause();
-  stdin.removeListener('data', keyListener);
+  stdin.on('data', keyListener);
+
+  // Wait for exit
+  while (!shouldExit) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
 }
 
 async function monitorStaticView(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
