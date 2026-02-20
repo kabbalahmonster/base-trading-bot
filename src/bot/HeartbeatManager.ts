@@ -68,8 +68,10 @@ export class HeartbeatManager {
       console.log(chalk.dim(`  Starting ${runningInstances.length} bots...`));
     }
     
-    // Load bots in parallel for faster startup
-    await Promise.all(runningInstances.map(instance => this.addBot(instance)));
+    // Load bots sequentially to avoid wallet initialization race conditions
+    for (const instance of runningInstances) {
+      await this.addBot(instance);
+    }
   }
 
   /**
