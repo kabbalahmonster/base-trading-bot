@@ -620,6 +620,17 @@ export class TradingBot {
    */
   private async executeSell(position: Position, tokenAmount: string, quote: any): Promise<TradeResult> {
     try {
+      // Validate quote has required fields
+      if (!quote || !quote.buyAmount || !quote.gas || !quote.gasPrice) {
+        console.error('   Sell quote missing required fields:', {
+          hasQuote: !!quote,
+          buyAmount: quote?.buyAmount,
+          gas: quote?.gas,
+          gasPrice: quote?.gasPrice,
+        });
+        return { success: false, error: 'Invalid sell quote - missing required fields' };
+      }
+
       // Check and handle token approval
       console.log(`   Checking token approval...`);
       const allowanceTarget = quote.allowanceTarget || quote.to;

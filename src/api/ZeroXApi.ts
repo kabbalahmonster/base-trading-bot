@@ -225,6 +225,16 @@ export class ZeroXApi {
       return { profitable: false, quote: null, actualProfit: 0 };
     }
 
+    // Validate quote has required fields
+    if (!quote.buyAmount || !quote.gas || !quote.gasPrice) {
+      console.error('   Sell quote missing required fields:', {
+        buyAmount: !!quote.buyAmount,
+        gas: !!quote.gas,
+        gasPrice: !!quote.gasPrice,
+      });
+      return { profitable: false, quote: null, actualProfit: 0 };
+    }
+
     const ethReceived = BigInt(quote.buyAmount);
     const gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
     const ethCost = BigInt(ethCostBasis);
