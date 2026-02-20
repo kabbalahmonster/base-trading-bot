@@ -985,46 +985,70 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
 
     // Bot Summary Table
     console.log(chalk.yellow('📈 BOT STATUS BOARD'));
-    console.log(chalk.yellow('═'.repeat(66)));
-    console.log(chalk.dim('  Name          Status   Pos    ETH        Token      Buy→Sell       Profit'));
-    console.log(chalk.dim('  ─────────────────────────────────────────────────────────────────────────'));
-
+    console.log(chalk.yellow('═'.repeat(80)));
+    
     for (const bot of enabledBots) {
-      const statusStr = bot.isRunning ? chalk.green('LIVE ') : chalk.gray('IDLE ');
-
+      const statusStr = bot.isRunning ? chalk.green('● LIVE') : chalk.gray('○ IDLE');
       const holding = bot.positions.filter(p => p.status === 'HOLDING').length;
-      const posStr = String(holding).padStart(2, ' ');
-
-      // Get next buy/sell using range-based logic
       const emptyPositions = bot.positions.filter(p => p.status === 'EMPTY');
       const holdingPositions = bot.positions.filter(p => p.status === 'HOLDING');
 
-      // Find next buy: empty position with buyMin closest above current price
+      // Find nearest empty position (next potential buy)
       const nextBuy = emptyPositions
-        .filter(p => (p.buyMin || p.buyPrice) > bot.currentPrice)
-        .sort((a, b) => (a.buyMin || a.buyPrice) - (b.buyMin || b.buyPrice))[0];
+        .map(p => {
+          const buyMin = p.buyMin || p.buyPrice;
+          const buyMax = p.buyMax || p.buyPrice;
+          const midPrice = (buyMin + buyMax) / 2;
+          const distance = Math.abs(midPrice - bot.currentPrice);
+          return { ...p, distance };
+        })
+        .sort((a, b) => a.distance - b.distance)[0];
 
       // Find next sell: holding position with lowest sellPrice
       const nextSell = holdingPositions
         .sort((a, b) => a.sellPrice - b.sellPrice)[0];
 
-      const buySellStr = nextBuy && nextSell
-        ? `${((nextBuy.buyMin || nextBuy.buyPrice) * 1000000).toFixed(1)}µ→${(nextSell.sellPrice * 1000000).toFixed(1)}µ`
-        : nextBuy ? `${((nextBuy.buyMin || nextBuy.buyPrice) * 1000000).toFixed(1)}µ→--`
-        : nextSell ? `--→${(nextSell.sellPrice * 1000000).toFixed(1)}µ`
-        : '--';
-
-      const profitStr = bot.totalProfitEth && BigInt(bot.totalProfitEth) > 0
-        ? chalk.green('+' + formatEther(BigInt(bot.totalProfitEth)).slice(0, 6))
-        : chalk.gray('0.00');
-
-      const nameStr = bot.name.slice(0, 13).padEnd(13, ' ');
-
-      console.log(`  ${nameStr} ${statusStr} ${posStr}    ${chalk.dim('...')}    ${chalk.dim('...')}    ${chalk.cyan(buySellStr.padStart(15))}  ${profitStr}`);
+      // Bot header line
+      console.log(`\n  ${chalk.bold(bot.name.slice(0, 15).padEnd(15))} ${statusStr} ${chalk.cyan(bot.tokenSymbol)}`);
+      console.log(`  ${chalk.dim('─'.repeat(76))}`);
+      
+      // Current price
+      console.log(`  Price: ${chalk.magenta(bot.currentPrice.toExponential(6))} ETH ${chalk.dim(`(${(bot.currentPrice * 1000000).toFixed(2)} µETH)`)}`);
+      
+      // Positions summary
+      console.log(`  Positions: ${chalk.green(holding + ' holding')} | ${chalk.yellow(emptyPositions.length + ' empty')}`);
+      
+      // Next buy info
+      if (nextBuy) {
+        const buyMin = nextBuy.buyMin || nextBuy.buyPrice;
+        const buyMax = nextBuy.buyMax || nextBuy.buyPrice;
+        const distPercent = ((buyMin - bot.currentPrice) / bot.currentPrice * 100);
+        const inRange = bot.currentPrice >= buyMin && bot.currentPrice <= buyMax;
+        const distStr = inRange 
+          ? chalk.green('IN RANGE NOW!')
+          : distPercent > 0 
+            ? chalk.yellow(`+${distPercent.toFixed(1)}%`)
+            : chalk.green(`${Math.abs(distPercent).toFixed(1)}%`);
+        console.log(`  Next Buy:  Position ${nextBuy.id} @ ${buyMin.toExponential(4)}-${buyMax.toExponential(4)} (${distStr})`);
+      } else {
+        console.log(`  Next Buy:  ${chalk.dim('None - all positions filled')}`);
+      }
+      
+      // Next sell info
+      if (nextSell) {
+        const profit = ((nextSell.sellPrice - nextSell.buyPrice) / nextSell.buyPrice * 100);
+        console.log(`  Next Sell: Position ${nextSell.id} @ ${nextSell.sellPrice.toExponential(4)} (${chalk.green('+' + profit.toFixed(1) + '%')})`);
+      } else {
+        console.log(`  Next Sell: ${chalk.dim('None - no holding positions')}`);
+      }
+      
+      // Profit
+      if (bot.totalProfitEth && BigInt(bot.totalProfitEth) > 0) {
+        console.log(`  Profit:    ${chalk.green('+' + formatEther(BigInt(bot.totalProfitEth)).slice(0, 8) + ' ETH')}`);
+      }
     }
 
-    console.log();
-    console.log(chalk.dim('  Legend: µ = micro ETH (0.000001 ETH) | Pos = holding positions'));
+    console.log(`\n  ${chalk.dim('═'.repeat(80))}`);
     console.log();
 
     // Active Alerts
