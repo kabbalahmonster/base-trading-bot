@@ -240,11 +240,11 @@ export class ZeroXApi {
     if (quote.gas && quote.gasPrice) {
       gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
     } else {
-      // Estimate gas: ~200k units at ~0.001 Gwei on Base
-      const estimatedGas = BigInt(200000);
+      // Estimate gas: 3M units (10x typical 300k swap) at ~0.001 Gwei on Base
+      const estimatedGas = BigInt(3000000);
       const estimatedGasPrice = BigInt(1000000); // 0.001 Gwei
       gasCost = estimatedGas * estimatedGasPrice;
-      console.log(chalk.yellow(`   ⚠ Using estimated gas: ${formatEther(gasCost)} ETH`));
+      console.log(chalk.yellow(`   ⚠ Using estimated gas: ${formatEther(gasCost)} ETH (3M units @ 0.001 Gwei)`));
     }
 
     // Calculate actual profit after gas
