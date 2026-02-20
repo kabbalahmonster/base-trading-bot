@@ -162,6 +162,16 @@ export class ZeroXApi {
         },
       });
 
+      // Check if transaction data is nested (0x API v2 format)
+      if (response.data.transaction) {
+        // Merge transaction data into top level for compatibility
+        response.data.to = response.data.transaction.to;
+        response.data.data = response.data.transaction.data;
+        response.data.value = response.data.transaction.value;
+        response.data.gas = response.data.transaction.gas;
+        response.data.gasPrice = response.data.transaction.gasPrice;
+      }
+
       return response.data;
     } catch (error: any) {
       console.error('0x API error (sell quote):', error.response?.data || error.message);
