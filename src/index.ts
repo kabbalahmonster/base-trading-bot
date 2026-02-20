@@ -1328,6 +1328,18 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
   while (!shouldExit) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
+
+  // Final cleanup (in case keyListener didn't fully clean up)
+  if (refreshInterval) {
+    clearInterval(refreshInterval);
+  }
+  try {
+    stdin.setRawMode(false);
+    stdin.pause();
+    stdin.removeListener('data', keyListener);
+  } catch {
+    // Ignore cleanup errors
+  }
 }
 
 async function monitorStaticView(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
