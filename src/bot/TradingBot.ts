@@ -564,24 +564,22 @@ export class TradingBot {
         position.tokensReceived = quote.buyAmount;
         position.ethCost = amountWei.toString();
 
-        // Record trade in PnL tracker
+        // Record trade in PnL tracker (non-blocking)
         if (this.pnLTracker) {
-          try {
-            const gasCostWei = receipt.gasUsed * BigInt(quote.gasPrice);
-            const price = Number(formatEther(amountWei)) / Number(formatEther(BigInt(quote.buyAmount)));
-            
-            await this.pnLTracker.recordBuy(
-              this.instance,
-              position.id,
-              quote.buyAmount,
-              price,
-              amountWei.toString(),
-              gasCostWei.toString(),
-              txHash
-            );
-          } catch (error: any) {
+          const gasCostWei = receipt.gasUsed * BigInt(quote.gasPrice);
+          const price = Number(formatEther(amountWei)) / Number(formatEther(BigInt(quote.buyAmount)));
+          
+          this.pnLTracker.recordBuy(
+            this.instance,
+            position.id,
+            quote.buyAmount,
+            price,
+            amountWei.toString(),
+            gasCostWei.toString(),
+            txHash
+          ).catch((error: any) => {
             console.warn(`   ⚠ Failed to record buy in PnL tracker: ${error.message}`);
-          }
+          });
         }
 
         return {
@@ -708,25 +706,23 @@ export class TradingBot {
         position.profitEth = profit.toString();
         position.profitPercent = profitPercent;
 
-        // Record trade in PnL tracker
+        // Record trade in PnL tracker (non-blocking)
         if (this.pnLTracker) {
-          try {
-            const price = Number(formatEther(ethReceived)) / Number(formatEther(BigInt(tokenAmount)));
-            
-            await this.pnLTracker.recordSell(
-              this.instance,
-              position.id,
-              tokenAmount,
-              price,
-              ethReceived.toString(),
-              gasCostWei.toString(),
-              profit.toString(),
-              profitPercent,
-              txHash
-            );
-          } catch (error: any) {
+          const price = Number(formatEther(ethReceived)) / Number(formatEther(BigInt(tokenAmount)));
+          
+          this.pnLTracker.recordSell(
+            this.instance,
+            position.id,
+            tokenAmount,
+            price,
+            ethReceived.toString(),
+            gasCostWei.toString(),
+            profit.toString(),
+            profitPercent,
+            txHash
+          ).catch((error: any) => {
             console.warn(`   ⚠ Failed to record sell in PnL tracker: ${error.message}`);
-          }
+          });
         }
 
         return {
