@@ -6,6 +6,7 @@
 
 import chalk from 'chalk';
 import axios, { AxiosInstance } from 'axios';
+import { formatEther } from 'viem';
 import { ZeroXQuote, Chain } from '../types/index.js';
 
 const ZEROX_API_BASE = 'https://api.0x.org';
@@ -225,19 +226,26 @@ export class ZeroXApi {
       return { profitable: false, quote: null, actualProfit: 0 };
     }
 
-    // Validate quote has required fields
-    if (!quote.buyAmount || !quote.gas || !quote.gasPrice) {
-      console.error('   Sell quote missing required fields:', {
-        buyAmount: !!quote.buyAmount,
-        gas: !!quote.gas,
-        gasPrice: !!quote.gasPrice,
-      });
+    // Validate quote has buyAmount
+    if (!quote.buyAmount) {
+      console.error('   Sell quote missing buyAmount');
       return { profitable: false, quote: null, actualProfit: 0 };
     }
 
     const ethReceived = BigInt(quote.buyAmount);
-    const gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
     const ethCost = BigInt(ethCostBasis);
+
+    // Handle missing gas estimates - use defaults for Base
+    let gasCost: bigint;
+    if (quote.gas && quote.gasPrice) {
+      gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
+    } else {
+      // Estimate gas: ~200k units at ~0.001 Gwei on Base
+      const estimatedGas = BigInt(200000);
+      const estimatedGasPrice = BigInt(1000000); // 0.001 Gwei
+      gasCost = estimatedGas * estimatedGasPrice;
+      console.log(chalk.yellow(`   ⚠ Using estimated gas: ${formatEther(gasCost)} ETH`));
+    }
 
     // Calculate actual profit after gas
     const netEth = ethReceived - gasCost;

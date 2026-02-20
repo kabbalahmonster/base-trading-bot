@@ -670,15 +670,21 @@ export class TradingBot {
         console.log(`   ✓ Sufficient allowance already granted`);
       }
 
-      // Validate quote fields before using
-      if (!quote.to || !quote.data || quote.gas === undefined || quote.gasPrice === undefined) {
-        console.error('   Sell quote missing required fields:', {
+      // Validate quote has transaction data
+      if (!quote.to || !quote.data) {
+        console.error('   Sell quote missing transaction data:', {
           to: !!quote.to,
           data: !!quote.data,
-          gas: quote.gas,
-          gasPrice: quote.gasPrice,
         });
         return { success: false, error: 'Invalid sell quote from 0x - missing transaction data' };
+      }
+
+      // Handle missing gas estimates - use defaults for Base
+      const gasLimit = quote.gas ? BigInt(quote.gas) : BigInt(300000);
+      const gasPrice = quote.gasPrice ? BigInt(quote.gasPrice) : BigInt(1000000); // 0.001 Gwei
+
+      if (!quote.gas || !quote.gasPrice) {
+        console.log(chalk.yellow(`   ⚠ Using estimated gas: ${gasLimit} @ ${formatEther(gasPrice)} ETH`));
       }
 
       console.log(`   Executing sell transaction...`);
@@ -688,8 +694,8 @@ export class TradingBot {
         to: quote.to as `0x${string}`,
         data: quote.data as `0x${string}`,
         value: BigInt(quote.value || '0'),
-        gas: BigInt(quote.gas),
-        gasPrice: BigInt(quote.gasPrice),
+        gas: gasLimit,
+        gasPrice: gasPrice,
       });
 
       console.log(`   Transaction sent: ${txHash}`);
@@ -701,9 +707,10 @@ export class TradingBot {
         // Reset error counter on success
         this.consecutiveErrors = 0;
         
-        // Calculate profit
+        // Calculate profit using actual gas used
         const ethReceived = BigInt(quote.buyAmount);
-        const gasCostWei = receipt.gasUsed * BigInt(quote.gasPrice);
+        const gasPrice: bigint = receipt.effectiveGasPrice ? receipt.effectiveGasPrice : BigInt(quote.gasPrice || '1000000');
+        const gasCostWei = receipt.gasUsed * gasPrice;
         const netEth = ethReceived - gasCostWei;
         const ethCost = BigInt(position.ethCost || '0');
         const profit = netEth > ethCost ? netEth - ethCost : BigInt(0);
