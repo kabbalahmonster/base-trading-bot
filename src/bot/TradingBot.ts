@@ -131,7 +131,15 @@ export class TradingBot {
       transport: http(this.rpcUrl),
     });
 
-    // Initialize Price Oracle if enabled
+    // Get wallet client - extends publicActions for waitForTransactionReceipt
+    const chain = this.chain;
+    if (this.instance.useMainWallet) {
+      this.walletClient = this.walletManager.getMainWalletClient(this.rpcUrl, chain) as WalletClient & { waitForTransactionReceipt: any };
+    } else {
+      this.walletClient = this.walletManager.getBotWalletClient(this.instance.id, this.rpcUrl, chain) as WalletClient & { waitForTransactionReceipt: any };
+    }
+
+    // Initialize Price Oracle if enabled (skip if disabled for faster startup)
     if (this.oracleValidationEnabled) {
       this.priceOracle = new PriceOracle({
         chain: this.chain,
@@ -142,21 +150,16 @@ export class TradingBot {
         twapSeconds: 1800, // 30 minutes default TWAP
       });
       
-      // Run health check
-      const health = await this.priceOracle.healthCheck();
-      if (health.healthy) {
-        console.log(`✓ Price Oracle initialized (ETH: $${health.ethPrice?.toFixed(2) ?? 'N/A'})`);
-      } else {
-        console.warn(`⚠ Price Oracle health check failed - continuing with 0x prices only`);
-      }
-    }
-
-    // Get wallet client - extends publicActions for waitForTransactionReceipt
-    const chain = this.chain;
-    if (this.instance.useMainWallet) {
-      this.walletClient = this.walletManager.getMainWalletClient(this.rpcUrl, chain) as WalletClient & { waitForTransactionReceipt: any };
-    } else {
-      this.walletClient = this.walletManager.getBotWalletClient(this.instance.id, this.rpcUrl, chain) as WalletClient & { waitForTransactionReceipt: any };
+      // Run health check asynchronously - don't block startup
+      this.priceOracle.healthCheck().then(health => {
+        if (health.healthy) {
+          console.log(`✓ Price Oracle initialized (ETH: $${health.ethPrice?.toFixed(2) ?? 'N/A'})`);
+        } else {
+          console.warn(`⚠ Price Oracle health check failed - continuing with 0x prices only`);
+        }
+      }).catch(() => {
+        console.warn(`⚠ Price Oracle initialization failed - continuing with 0x prices only`);
+      });
     }
 
     // Initialize positions if empty
