@@ -2606,6 +2606,7 @@ async function reconfigureBot(storage: JsonStorage) {
       choices: [
         { name: '📊 Change grid settings (positions, profit %)', value: 'grid' },
         { name: '💰 Change buy settings (fixed amount, moon bag)', value: 'buy' },
+        { name: '📈 Update profit targets (all positions)', value: 'profit' },
         { name: '🔄 Regenerate positions (preserve balances)', value: 'regenerate' },
         { name: '⬅️  Back', value: 'back' },
       ],
@@ -2615,6 +2616,55 @@ async function reconfigureBot(storage: JsonStorage) {
   if (action === 'back') {
     console.log(chalk.dim('\nCancelled.\n'));
     return;
+  }
+
+  if (action === 'profit') {
+    console.log(chalk.cyan('\n📈 Update Profit Targets\n'));
+    console.log(chalk.dim('This updates the sell price for ALL existing positions.'));
+    console.log(chalk.dim('Use this to change profit % without regenerating the grid.\n'));
+    console.log(chalk.dim(`Current take profit: ${bot.config.takeProfitPercent}%`));
+
+    const { newProfitPercent, confirm } = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'newProfitPercent',
+        message: 'New take profit % per position:',
+        default: bot.config.takeProfitPercent,
+        validate: (input) => input > 0 || 'Must be positive',
+      },
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: (answers) => `Update all ${bot.positions.length} positions to ${answers.newProfitPercent}% profit?`,
+        default: false,
+      },
+    ]);
+
+    if (!confirm) {
+      console.log(chalk.dim('\nCancelled.\n'));
+      return;
+    }
+
+    // Update config
+    const oldProfit = bot.config.takeProfitPercent;
+    bot.config.takeProfitPercent = newProfitPercent;
+
+    // Update all positions
+    let updatedCount = 0;
+    for (const position of bot.positions) {
+      // Calculate new sell price based on buy price and new profit %
+      const newSellPrice = position.buyPrice * (1 + newProfitPercent / 100);
+      position.sellPrice = newSellPrice;
+      updatedCount++;
+    }
+
+    bot.lastUpdated = Date.now();
+    await storage.saveBot(bot);
+
+    console.log(chalk.green(`\n✓ Updated ${updatedCount} positions`));
+    console.log(chalk.dim(`  Old profit: ${oldProfit}%`));
+    console.log(chalk.dim(`  New profit: ${newProfitPercent}%`));
+    console.log(chalk.dim(`  Grid structure: Unchanged\n`));
   }
 
   if (action === 'grid') {
