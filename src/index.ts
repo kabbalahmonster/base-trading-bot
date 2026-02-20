@@ -2886,34 +2886,54 @@ async function reconfigureBot(storage: JsonStorage) {
         console.log(chalk.cyan('\nMatching holding positions to new grid...\n'));
         
         for (const holdingPos of sortedHolding) {
-          // Find closest new position with buy price >= holding buy price
-          const targetIndex = newPositions.findIndex(p => p.buyPrice <= holdingPos.buyPrice);
+          // Find closest new position by matching buy range (not just buy price)
+          // Look for position where holding's buy price falls within the new position's range
+          // or closest to it
+          let targetIndex = newPositions.findIndex(p => 
+            holdingPos.buyPrice >= p.buyMin && holdingPos.buyPrice <= p.buyMax
+          );
+          
+          // If no exact range match, find closest by distance to range midpoint
+          if (targetIndex < 0) {
+            let minDistance = Infinity;
+            for (let i = 0; i < newPositions.length; i++) {
+              const p = newPositions[i];
+              const midPrice = (p.buyMin + p.buyMax) / 2;
+              const distance = Math.abs(holdingPos.buyPrice - midPrice);
+              if (distance < minDistance) {
+                minDistance = distance;
+                targetIndex = i;
+              }
+            }
+          }
           
           if (targetIndex >= 0) {
-            // Preserve the holding position data but update ID
-            newPositions[targetIndex] = {
-              ...holdingPos,
-              id: newPositions[targetIndex].id,
-              // Keep original sell price if higher than new grid's sell price
-              sellPrice: Math.max(holdingPos.sellPrice, newPositions[targetIndex].sellPrice),
-            };
-            console.log(`  ✓ Position ${holdingPos.id} → new position ${newPositions[targetIndex].id}`);
-          } else {
-            // No suitable position found - add to lowest position
-            const lowestIndex = newPositions.length - 1;
-            const existingTokens = BigInt(newPositions[lowestIndex].tokensReceived || '0');
-            const holdingTokens = BigInt(holdingPos.tokensReceived || '0');
-            const existingCost = BigInt(newPositions[lowestIndex].ethCost || '0');
-            const holdingCost = BigInt(holdingPos.ethCost || '0');
-            
-            newPositions[lowestIndex] = {
-              ...holdingPos,
-              id: newPositions[lowestIndex].id,
-              tokensReceived: (existingTokens + holdingTokens).toString(),
-              ethCost: (existingCost + holdingCost).toString(),
-              sellPrice: Math.max(holdingPos.sellPrice, newPositions[lowestIndex].sellPrice),
-            };
-            console.log(`  ✓ Position ${holdingPos.id} → merged into lowest position`);
+            // Check if target position already has a holding
+            if (newPositions[targetIndex].status === 'HOLDING') {
+              // Merge with existing holding
+              const existingTokens = BigInt(newPositions[targetIndex].tokensReceived || '0');
+              const holdingTokens = BigInt(holdingPos.tokensReceived || '0');
+              const existingCost = BigInt(newPositions[targetIndex].ethCost || '0');
+              const holdingCost = BigInt(holdingPos.ethCost || '0');
+              
+              newPositions[targetIndex] = {
+                ...holdingPos,
+                id: newPositions[targetIndex].id,
+                tokensReceived: (existingTokens + holdingTokens).toString(),
+                ethCost: (existingCost + holdingCost).toString(),
+                sellPrice: Math.max(holdingPos.sellPrice, newPositions[targetIndex].sellPrice),
+              };
+              console.log(`  ✓ Position ${holdingPos.id} → merged into position ${newPositions[targetIndex].id}`);
+            } else {
+              // Place holding in empty position
+              newPositions[targetIndex] = {
+                ...holdingPos,
+                id: newPositions[targetIndex].id,
+                // Keep original sell price if higher than new grid's sell price
+                sellPrice: Math.max(holdingPos.sellPrice, newPositions[targetIndex].sellPrice),
+              };
+              console.log(`  ✓ Position ${holdingPos.id} → new position ${newPositions[targetIndex].id}`);
+            }
           }
         }
       }
