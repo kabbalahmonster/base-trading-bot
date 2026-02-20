@@ -235,16 +235,14 @@ export class ZeroXApi {
     const ethReceived = BigInt(quote.buyAmount);
     const ethCost = BigInt(ethCostBasis);
 
-    // Handle missing gas estimates - use defaults for Base
+    // Handle missing gas estimates - use fixed 0.00003 ETH as configured by user
     let gasCost: bigint;
     if (quote.gas && quote.gasPrice) {
       gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
     } else {
-      // Estimate gas: 3M units (10x typical 300k swap) at ~0.001 Gwei on Base
-      const estimatedGas = BigInt(3000000);
-      const estimatedGasPrice = BigInt(1000000); // 0.001 Gwei
-      gasCost = estimatedGas * estimatedGasPrice;
-      console.log(chalk.yellow(`   ⚠ Using estimated gas: ${formatEther(gasCost)} ETH (3M units @ 0.001 Gwei)`));
+      // Fixed gas cost estimate: 0.00003 ETH
+      gasCost = BigInt(30000000000000); // 0.00003 ETH in wei
+      console.log(chalk.yellow(`   ⚠ Using estimated gas cost: ${formatEther(gasCost)} ETH`));
     }
 
     // Calculate actual profit after gas

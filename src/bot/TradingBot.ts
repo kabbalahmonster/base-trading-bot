@@ -680,12 +680,13 @@ export class TradingBot {
       }
 
       // Handle missing gas estimates - use defaults for Base
-      // 3M gas (10x typical 300k swap) at ~0.001 Gwei
+      // Gas limit 3M units, gas price 0.01 Gwei for ~0.00003 ETH total
       const gasLimit = quote.gas ? BigInt(quote.gas) : BigInt(3000000);
-      const gasPrice = quote.gasPrice ? BigInt(quote.gasPrice) : BigInt(1000000); // 0.001 Gwei
+      const gasPrice = quote.gasPrice ? BigInt(quote.gasPrice) : BigInt(10000000); // 0.01 Gwei
 
       if (!quote.gas || !quote.gasPrice) {
-        console.log(chalk.yellow(`   ⚠ Using estimated gas: ${gasLimit} units @ ${formatEther(gasPrice)} ETH/gas`));
+        const estimatedCost = formatEther(gasLimit * gasPrice);
+        console.log(chalk.yellow(`   ⚠ Using estimated gas: ${gasLimit} units @ 0.01 Gwei = ${estimatedCost} ETH`));
       }
 
       console.log(`   Executing sell transaction...`);
