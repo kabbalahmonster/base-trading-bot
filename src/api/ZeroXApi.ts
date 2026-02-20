@@ -6,7 +6,7 @@
 
 import chalk from 'chalk';
 import axios, { AxiosInstance } from 'axios';
-import { formatEther } from 'viem';
+import { parseEther } from 'viem';
 import { ZeroXQuote, Chain } from '../types/index.js';
 
 const ZEROX_API_BASE = 'https://api.0x.org';
@@ -218,7 +218,8 @@ export class ZeroXApi {
     ethCostBasis: string,
     minProfitPercent: number,
     takerAddress: string,
-    strictMode: boolean = true
+    strictMode: boolean = true,
+    fallbackGasEth: number = 0.00001
   ): Promise<{ profitable: boolean; quote: ZeroXQuote | null; actualProfit: number; strictCheck?: boolean }> {
     const quote = await this.getSellQuote(tokenAddress, tokenAmount, takerAddress);
 
@@ -235,14 +236,14 @@ export class ZeroXApi {
     const ethReceived = BigInt(quote.buyAmount);
     const ethCost = BigInt(ethCostBasis);
 
-    // Handle missing gas estimates - use fixed 0.00003 ETH as configured by user
+    // Handle missing gas estimates - use configured fallback
     let gasCost: bigint;
     if (quote.gas && quote.gasPrice) {
       gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
     } else {
-      // Fixed gas cost estimate: 0.00003 ETH
-      gasCost = BigInt(30000000000000); // 0.00003 ETH in wei
-      console.log(chalk.yellow(`   ⚠ Using estimated gas cost: ${formatEther(gasCost)} ETH`));
+      // Use configured fallback gas estimate (default: 0.00001 ETH)
+      gasCost = parseEther(fallbackGasEth.toString());
+      console.log(chalk.yellow(`   ⚠ Using estimated gas cost: ${fallbackGasEth} ETH`));
     }
 
     // Calculate actual profit after gas

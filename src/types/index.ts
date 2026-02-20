@@ -111,6 +111,10 @@ export interface GridConfig {
   volumeBuysPerCycle?: number;
   /** ETH amount per buy in volume mode (default: 0.001) */
   volumeBuyAmount?: number;
+
+  // Gas estimate fallback
+  /** Fallback gas cost in ETH when 0x API doesn't provide estimates (default: 0.00001) */
+  fallbackGasEstimate?: number;
 }
 
 /**

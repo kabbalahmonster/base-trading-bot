@@ -548,8 +548,9 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     botWalletAddress = botWallet.address;
   }
 
-  // Get default gas reserve from storage
+  // Get default settings from storage
   const defaultGasReserve = await storage.getConfig('gasReserveEth', 0.0005);
+  const defaultFallbackGas = await storage.getConfig('fallbackGasEstimate', 0.00001);
 
   // Create config
   const config: GridConfig = isVolumeBot
@@ -571,6 +572,7 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         useFixedBuyAmount: true,
         buyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
         gasReserveEth: defaultGasReserve,
+        fallbackGasEstimate: defaultFallbackGas,
         volumeMode: true,
         volumeBuysPerCycle: answers.volumeBuysPerCycle || 3,
         volumeBuyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
@@ -595,6 +597,7 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         useFixedBuyAmount: answers.useFixedBuyAmount || false,
         buyAmount: answers.useFixedBuyAmount ? parseFloat(answers.buyAmount || '0.001') : 0,
         gasReserveEth: defaultGasReserve,
+        fallbackGasEstimate: defaultFallbackGas,
         heartbeatMs: 1000,
         skipHeartbeats: 0,
       };
@@ -4042,8 +4045,9 @@ async function runDiagnostic(storage: JsonStorage, _heartbeatManager: HeartbeatM
 async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
   console.log(chalk.cyan('\n⚙️  System Settings\n'));
 
-  // Get current gas reserve from storage
+  // Get current settings from storage
   const currentGasReserve = await storage.getConfig('gasReserveEth', 0.0005);
+  const currentFallbackGas = await storage.getConfig('fallbackGasEstimate', 0.00001);
 
   const { setting } = await inquirer.prompt([
     {
@@ -4054,6 +4058,7 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
         { name: `⏱️  Heartbeat interval (current: ${heartbeatManager.getInterval()}ms)`, value: 'heartbeat' },
         { name: '📺 Live monitor refresh rate', value: 'monitor_refresh' },
         { name: `⛽ Gas reserve (current: ${currentGasReserve} ETH)`, value: 'gas_reserve' },
+        { name: `🔧 Fallback gas estimate (current: ${currentFallbackGas} ETH)`, value: 'fallback_gas' },
         { name: '📊 Default price oracle confidence', value: 'confidence' },
         { name: '🔔 Global notification settings', value: 'notifications' },
         { name: '⬅️  Back', value: 'back' },
@@ -4162,6 +4167,41 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
     }
 
     console.log(chalk.green(`\n✓ Gas reserve set to ${newReserve} ETH`));
+    console.log(chalk.dim('Applied to all bots immediately.\n'));
+  }
+
+  if (setting === 'fallback_gas') {
+    console.log(chalk.cyan('\n🔧 Fallback Gas Estimate\n'));
+    console.log(chalk.dim('This is the estimated gas cost used when 0x API does not provide gas estimates.'));
+    console.log(chalk.dim('Used for profitability calculations before executing sells.\n'));
+    console.log(chalk.dim(`Current: ${currentFallbackGas} ETH`));
+    console.log(chalk.dim('Recommended: 0.00001 - 0.00003 ETH for Base\n'));
+
+    const { fallbackGas } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'fallbackGas',
+        message: 'Enter fallback gas estimate (ETH):',
+        default: String(currentFallbackGas),
+        validate: (input) => {
+          const val = parseFloat(input);
+          return (!isNaN(val) && val > 0) || 'Must be a positive number';
+        },
+      },
+    ]);
+
+    const newFallbackGas = parseFloat(fallbackGas);
+    await storage.setConfig('fallbackGasEstimate', newFallbackGas);
+
+    // Update all bots to use new fallback
+    const bots = await storage.getAllBots();
+    for (const bot of bots) {
+      bot.config.fallbackGasEstimate = newFallbackGas;
+      bot.lastUpdated = Date.now();
+      await storage.saveBot(bot);
+    }
+
+    console.log(chalk.green(`\n✓ Fallback gas estimate set to ${newFallbackGas} ETH`));
     console.log(chalk.dim('Applied to all bots immediately.\n'));
   }
 

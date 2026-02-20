@@ -344,13 +344,15 @@ export class TradingBot {
 
       // Check profitability with STRICT 2% minimum guarantee
       // Requires: ETH received >= (buy cost + gas) * 1.02
+      const fallbackGasEth = this.instance.config.fallbackGasEstimate ?? 0.00001;
       const { profitable, quote, actualProfit, strictCheck } = await this.zeroXApi.isProfitable(
         this.instance.tokenAddress,
         sellAmount,
         position.ethCost || '0',
         this.instance.config.minProfitPercent,
         this.instance.walletAddress,
-        true // strict mode enabled
+        true, // strict mode enabled
+        fallbackGasEth
       );
 
       if (!profitable || !quote) {
