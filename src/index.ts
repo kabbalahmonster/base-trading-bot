@@ -230,6 +230,14 @@ async function main() {
   // Load existing bots
   await heartbeatManager.loadBots();
 
+  // Check if any bots were loaded and are running - auto-start heartbeat
+  const loadedBots = await storage.getAllBots();
+  const runningBots = loadedBots.filter(b => b.isRunning);
+  if (runningBots.length > 0) {
+    console.log(chalk.dim(`\n✓ ${runningBots.length} bot(s) already running, reconnecting...`));
+    heartbeatManager.start();
+  }
+
   while (true) {
     const { action } = await inquirer.prompt([
       {
@@ -796,7 +804,8 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
   const bots = await storage.getAllBots();
 
   console.log(chalk.cyan('\n📊 System Status\n'));
-  console.log(`Heartbeat: ${status.isRunning ? chalk.green('RUNNING') : chalk.red('STOPPED')}`);
+  console.log(`CLI Heartbeat: ${status.isRunning ? chalk.green('CONNECTED') : chalk.yellow('STANDBY')}`);
+  console.log(chalk.dim(`  (Controls bot monitoring, bots run independently in daemon mode)`));
   console.log(`Total bots: ${stats.totalBots}`);
   console.log(`Running: ${stats.runningBots}`);
   console.log(`Total profit: ${formatEther(BigInt(stats.totalProfitEth))} ETH`);
