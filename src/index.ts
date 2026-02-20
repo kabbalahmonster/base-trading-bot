@@ -420,9 +420,15 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
       choices: [
         { name: '📊 Grid Trading Bot (standard)', value: 'grid' },
         { name: '📈 Volume Bot (buy N times, then sell all)', value: 'volume' },
+        { name: '⬅️  Back', value: 'back' },
       ],
     },
   ]);
+
+  if (botType === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
 
   const isVolumeBot = botType === 'volume';
 
