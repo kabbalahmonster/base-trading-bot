@@ -207,6 +207,8 @@ export class TradingBot {
   /**
    * Check and execute buy opportunities
    */
+  private buyingPositionIds = new Set<number>();
+
   private async checkBuys(currentPrice: number): Promise<void> {
     // Check max active positions
     const activeCount = GridCalculator.countActivePositions(this.instance.positions);
@@ -221,6 +223,21 @@ export class TradingBot {
     );
 
     if (!position) return;
+
+    // Guard against buying the same position twice
+    if (this.buyingPositionIds.has(position.id)) {
+      console.log(`   Position ${position.id} is already being bought, skipping...`);
+      return;
+    }
+
+    // Double-check position is still empty (might have been filled by concurrent tick)
+    const currentPosition = this.instance.positions.find(p => p.id === position.id);
+    if (!currentPosition || currentPosition.status !== 'EMPTY') {
+      console.log(`   Position ${position.id} is no longer available, skipping...`);
+      return;
+    }
+
+    this.buyingPositionIds.add(position.id);
 
     // Validate price using oracle before buying
     if (this.oracleValidationEnabled && this.priceOracle) {
@@ -267,6 +284,9 @@ export class TradingBot {
 
     // Execute buy
     const result = await this.executeBuy(position, buyAmountEth.toString());
+
+    // Remove from buying set (whether success or failure)
+    this.buyingPositionIds.delete(position.id);
 
     if (result.success) {
       console.log(`✅ Buy executed: Position ${position.id}`);
