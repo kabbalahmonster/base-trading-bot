@@ -300,19 +300,24 @@ export class TradingBot {
       console.log(`   Cost: ${formatEther(BigInt(position.ethCost || '0'))} ETH`);
       this.instance.totalBuys++;
       
-      // Send notification
+      // Send notification (non-blocking)
       const notificationService = NotificationService.getInstance();
-      await notificationService.notifyTradeExecuted(
+      notificationService.notifyTradeExecuted(
         this.instance,
         formatEther(BigInt(position.tokensReceived || '0')),
         formatEther(BigInt(position.ethCost || '0')),
         position.id
-      );
+      ).catch(() => {
+        // Ignore notification errors
+      });
     } else {
       console.error(`❌ Buy failed: ${result.error}`);
     }
 
-    await this.storage.saveBot(this.instance);
+    // Save bot state (non-blocking with timeout)
+    this.storage.saveBot(this.instance).catch(() => {
+      // Ignore save errors - will retry on next tick
+    });
   }
 
   /**
@@ -368,20 +373,25 @@ export class TradingBot {
         this.instance.totalSells++;
         this.instance.totalProfitEth = (BigInt(this.instance.totalProfitEth) + BigInt(position.profitEth || '0')).toString();
         
-        // Send notification
+        // Send notification (non-blocking)
         const notificationService = NotificationService.getInstance();
-        await notificationService.notifyProfit(
+        notificationService.notifyProfit(
           this.instance,
           position.profitPercent || 0,
           position.profitEth || '0',
           position.ethReceived,
           position.id
-        );
+        ).catch(() => {
+          // Ignore notification errors
+        });
       } else {
         console.error(`❌ Sell failed: ${result.error}`);
       }
 
-      await this.storage.saveBot(this.instance);
+      // Save bot state (non-blocking)
+      this.storage.saveBot(this.instance).catch(() => {
+        // Ignore save errors - will retry on next tick
+      });
     }
   }
 
