@@ -59,12 +59,12 @@ export class HeartbeatManager {
    */
   async loadBots(): Promise<void> {
     const instances = await this.storage.getAllBots();
+    const runningInstances = instances.filter(i => i.isRunning);
     
-    for (const instance of instances) {
-      if (instance.isRunning) {
-        await this.addBot(instance);
-      }
-    }
+    if (runningInstances.length === 0) return;
+    
+    // Load bots in parallel for faster startup
+    await Promise.all(runningInstances.map(instance => this.addBot(instance)));
   }
 
   /**

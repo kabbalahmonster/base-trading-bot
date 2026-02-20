@@ -164,6 +164,7 @@ async function main() {
     ]);
 
     try {
+      console.log(chalk.dim('  Unlocking wallet...'));
       await walletManager.initialize(password);
       const primaryWalletId = await storage.getPrimaryWalletId();
       walletManager.importData({ walletDictionary, primaryWalletId });
@@ -228,13 +229,14 @@ async function main() {
   );
 
   // Load existing bots
+  console.log(chalk.dim('  Loading bots...'));
   await heartbeatManager.loadBots();
 
   // Check if any bots were loaded and are running - auto-start heartbeat
   const loadedBots = await storage.getAllBots();
   const runningBots = loadedBots.filter(b => b.isRunning);
   if (runningBots.length > 0) {
-    console.log(chalk.dim(`\n✓ ${runningBots.length} bot(s) already running, reconnecting...`));
+    console.log(chalk.dim(`  ${runningBots.length} bot(s) already running, reconnecting...`));
     heartbeatManager.start();
   }
 
@@ -668,6 +670,8 @@ async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage
 
   // Track which bots we're starting
   const botsToStart: typeof enabledBots = [];
+  
+  console.log(chalk.dim('  Initializing bot(s)...'));
   
   if (botId === 'all') {
     for (const bot of enabledBots) {

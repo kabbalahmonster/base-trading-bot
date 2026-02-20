@@ -147,28 +147,29 @@ export class TradingBot {
         minConfidence: this.minPriceConfidence,
         allowFallback: true,
         preferChainlink: true,
-        twapSeconds: 1800, // 30 minutes default TWAP
+        twapSeconds: 1800,
       });
       
       // Run health check asynchronously - don't block startup
       this.priceOracle.healthCheck().then(health => {
         if (health.healthy) {
           console.log(`✓ Price Oracle initialized (ETH: $${health.ethPrice?.toFixed(2) ?? 'N/A'})`);
-        } else {
-          console.warn(`⚠ Price Oracle health check failed - continuing with 0x prices only`);
         }
       }).catch(() => {
-        console.warn(`⚠ Price Oracle initialization failed - continuing with 0x prices only`);
+        // Silently fail - oracle is optional
       });
     }
 
     // Initialize positions if empty
     if (this.instance.positions.length === 0) {
-      const currentPrice = await this.getCurrentPrice();
+      // Use stored price or fetch new one
+      let currentPrice = this.instance.currentPrice;
+      if (!currentPrice || currentPrice <= 0) {
+        currentPrice = await this.getCurrentPrice();
+      }
       this.instance.positions = GridCalculator.generateGrid(currentPrice, this.instance.config);
       this.instance.currentPrice = currentPrice;
       await this.storage.saveBot(this.instance);
-      console.log(`✓ Grid initialized with ${this.instance.positions.length} positions at ${GridCalculator.formatPrice(currentPrice)} ETH/token`);
     }
 
     this.isRunning = true;
