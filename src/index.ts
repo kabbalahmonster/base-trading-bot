@@ -637,11 +637,13 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
 }
 
 async function startBot(heartbeatManager: HeartbeatManager, storage: JsonStorage, ensureWalletInitialized: () => Promise<boolean>) {
+  console.log(chalk.dim('  Checking wallet...'));
   // Ensure wallet is initialized before starting bots
   if (!await ensureWalletInitialized()) {
     return;
   }
 
+  console.log(chalk.dim('  Loading bot list...'));
   const bots = await storage.getAllBots();
   if (bots.length === 0) {
     console.log(chalk.yellow('\nNo bots found. Create one first.\n'));
@@ -808,6 +810,7 @@ async function toggleBotStatus(storage: JsonStorage, heartbeatManager: Heartbeat
 }
 
 async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStorage) {
+  console.log(chalk.dim('  Loading status...'));
   const stats = await storage.getGlobalStats();
   const status = heartbeatManager.getStatus();
   const bots = await storage.getAllBots();
