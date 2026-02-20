@@ -276,6 +276,8 @@ export interface BotStorage {
   circuitBreaker?: any;
   /** Trailing stop loss states per bot */
   trailingStopStates?: Record<string, any>;
+  /** General configuration settings */
+  config?: Record<string, any>;
 }
 
 /**

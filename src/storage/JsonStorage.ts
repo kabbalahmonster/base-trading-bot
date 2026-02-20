@@ -299,4 +299,19 @@ export class JsonStorage {
     this.db.data!.trailingStopStates[botId] = state;
     await this.db.write();
   }
+
+  // General Config Methods
+  async getConfig(key: string, defaultValue?: any): Promise<any> {
+    await this.db.read();
+    return this.db.data?.config?.[key] ?? defaultValue;
+  }
+
+  async setConfig(key: string, value: any): Promise<void> {
+    if (!this.db.data) await this.init();
+    if (!this.db.data!.config) {
+      this.db.data!.config = {};
+    }
+    this.db.data!.config[key] = value;
+    await this.db.write();
+  }
 }

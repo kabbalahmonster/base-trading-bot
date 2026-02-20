@@ -924,15 +924,18 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
   }
 
   if (mode === 'all') {
-    await monitorAllBots(enabledBots, heartbeatManager);
+    await monitorAllBots(enabledBots, heartbeatManager, storage);
   } else if (mode === 'single') {
-    await monitorSingleBot(enabledBots, heartbeatManager);
+    await monitorSingleBot(enabledBots, heartbeatManager, storage);
   } else if (mode === 'static') {
     await monitorStaticView(enabledBots, heartbeatManager);
   }
 }
 
-async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
+async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager, storage: JsonStorage) {
+  // Load refresh rate from storage (default 3000ms)
+  const refreshRate = await storage.getConfig('monitorRefreshRate', 3000);
+  
   let autoRefresh = false;
   let refreshCount = 0;
   let shouldExit = false;
@@ -1064,7 +1067,7 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
       // Toggle auto-refresh
       autoRefresh = !autoRefresh;
       if (autoRefresh) {
-        refreshInterval = setInterval(displayFleet, 3000);
+        refreshInterval = setInterval(displayFleet, refreshRate);
       } else if (refreshInterval) {
         clearInterval(refreshInterval);
         refreshInterval = null;
@@ -1093,7 +1096,10 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
   }
 }
 
-async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: HeartbeatManager) {
+async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: HeartbeatManager, storage: JsonStorage) {
+  // Load refresh rate from storage (default 3000ms)
+  const refreshRate = await storage.getConfig('monitorRefreshRate', 3000);
+  
   // Select bot to monitor
   const { botId } = await inquirer.prompt([
     {
@@ -1369,7 +1375,7 @@ async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: H
       // Toggle auto-refresh
       autoRefresh = !autoRefresh;
       if (autoRefresh) {
-        refreshInterval = setInterval(displayBot, 3000);
+        refreshInterval = setInterval(displayBot, refreshRate);
       } else if (refreshInterval) {
         clearInterval(refreshInterval);
         refreshInterval = null;
@@ -3917,9 +3923,6 @@ async function runDiagnostic(storage: JsonStorage, _heartbeatManager: HeartbeatM
  * System settings configuration
  */
 async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
-  // Reference heartbeatManager to satisfy TypeScript (used in heartbeat settings)
-  void heartbeatManager;
-  
   console.log(chalk.cyan('\n⚙️  System Settings\n'));
 
   const { setting } = await inquirer.prompt([
@@ -3928,7 +3931,8 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
       name: 'setting',
       message: 'What would you like to configure?',
       choices: [
-        { name: '⏱️  Heartbeat interval', value: 'heartbeat' },
+        { name: `⏱️  Heartbeat interval (current: ${heartbeatManager.getInterval()}ms)`, value: 'heartbeat' },
+        { name: '📺 Live monitor refresh rate', value: 'monitor_refresh' },
         { name: '📊 Default price oracle confidence', value: 'confidence' },
         { name: '🔔 Global notification settings', value: 'notifications' },
         { name: '⬅️  Back', value: 'back' },
@@ -3942,14 +3946,19 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
   }
 
   if (setting === 'heartbeat') {
+    const currentInterval = heartbeatManager.getInterval();
+    console.log(chalk.dim(`\nCurrent heartbeat interval: ${currentInterval}ms`));
+    console.log(chalk.dim(`Status: ${heartbeatManager.getStatus().isRunning ? 'Running' : 'Stopped'}\n`));
+
     const { interval } = await inquirer.prompt([
       {
         type: 'list',
         name: 'interval',
-        message: 'Select heartbeat interval:',
+        message: 'Select new heartbeat interval:',
         choices: [
           { name: '1 second (fastest, more RPC calls)', value: 1000 },
           { name: '2 seconds (recommended)', value: 2000 },
+          { name: '3 seconds (balanced)', value: 3000 },
           { name: '5 seconds (slower, fewer RPC calls)', value: 5000 },
           { name: '10 seconds (slowest, minimal RPC)', value: 10000 },
           { name: '⬅️  Back', value: 'back' },
@@ -3962,38 +3971,42 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
       return;
     }
 
-    // Update all running bots
-    const bots = await storage.getAllBots();
-    const runningBots = bots.filter(b => b.isRunning);
+    // Apply immediately without restart
+    heartbeatManager.updateInterval(interval);
+    console.log(chalk.green(`\n✓ Heartbeat interval updated to ${interval}ms`));
+    console.log(chalk.dim('Change applied immediately to all running bots.\n'));
+  }
 
-    if (runningBots.length > 0) {
-      console.log(chalk.yellow(`\n⚠️  ${runningBots.length} bot(s) are running.`));
-      console.log(chalk.dim('They need to be restarted to apply the new interval.\n'));
+  if (setting === 'monitor_refresh') {
+    console.log(chalk.cyan('\n📺 Live Monitor Refresh Rate\n'));
+    console.log(chalk.dim('This controls how often the live monitor updates when auto-refresh is ON.'));
+    console.log(chalk.dim('Note: Manual refresh is always available with the [R] key.\n'));
 
-      const { restart } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'restart',
-          message: 'Restart running bots now?',
-          default: true,
-        },
-      ]);
+    const { refreshRate } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'refreshRate',
+        message: 'Select monitor refresh rate:',
+        choices: [
+          { name: '1 second (real-time, more flicker)', value: 1000 },
+          { name: '2 seconds (responsive)', value: 2000 },
+          { name: '3 seconds (recommended)', value: 3000 },
+          { name: '5 seconds (calm)', value: 5000 },
+          { name: '10 seconds (minimal updates)', value: 10000 },
+          { name: '⬅️  Back', value: 'back' },
+        ],
+      },
+    ]);
 
-      if (restart) {
-        heartbeatManager.stop();
-        for (const bot of runningBots) {
-          heartbeatManager.removeBot(bot.id);
-        }
-
-        // TODO: Store interval in storage and use it when creating heartbeat manager
-        // For now, just notify user
-        console.log(chalk.green(`\n✓ Stopped bots. New interval (${interval}ms) will apply on next start.`));
-        console.log(chalk.dim('Note: Interval is currently hardcoded. Restart the CLI to apply.\n'));
-      }
-    } else {
-      console.log(chalk.green(`\n✓ Heartbeat interval set to ${interval}ms`));
-      console.log(chalk.dim('Will apply to new bots on next start.\n'));
+    if (refreshRate === 'back') {
+      console.log(chalk.dim('\nCancelled.\n'));
+      return;
     }
+
+    // Store in storage for persistence
+    await storage.setConfig('monitorRefreshRate', refreshRate);
+    console.log(chalk.green(`\n✓ Monitor refresh rate set to ${refreshRate}ms`));
+    console.log(chalk.dim('Will apply to new monitor sessions.\n'));
   }
 
   if (setting === 'confidence') {

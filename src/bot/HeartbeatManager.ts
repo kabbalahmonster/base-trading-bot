@@ -135,6 +135,39 @@ export class HeartbeatManager {
   }
 
   /**
+   * Update heartbeat interval dynamically without restart
+   */
+  updateInterval(newIntervalMs: number): void {
+    const wasRunning = this.isRunning;
+    
+    // Stop current interval
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    
+    // Update interval
+    this.heartbeatMs = newIntervalMs;
+    
+    // Restart if was running
+    if (wasRunning) {
+      this.heartbeatInterval = setInterval(() => {
+        this.tick();
+      }, this.heartbeatMs);
+      console.log(`✓ Heartbeat interval updated to ${newIntervalMs}ms`);
+    } else {
+      console.log(`✓ Heartbeat interval set to ${newIntervalMs}ms (will apply on start)`);
+    }
+  }
+
+  /**
+   * Get current heartbeat interval
+   */
+  getInterval(): number {
+    return this.heartbeatMs;
+  }
+
+  /**
    * Single heartbeat tick
    */
   private async tick(): Promise<void> {
