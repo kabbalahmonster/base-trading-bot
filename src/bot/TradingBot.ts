@@ -474,9 +474,21 @@ export class TradingBot {
         return { success: false, error: 'No quote available from 0x' };
       }
 
-      // Debug: log full quote structure
+      // Check if quote has transaction data (required for execution)
+      const hasTxData = quote.to && quote.data && quote.value !== undefined && quote.gas !== undefined && quote.gasPrice !== undefined;
+      
+      if (!hasTxData) {
+        console.error(chalk.yellow('   ⚠️  Quote received but missing transaction data'));
+        console.error(chalk.dim('   This usually means:'));
+        console.error(chalk.dim('   1. No 0x API key (set ZEROX_API_KEY in .env)'));
+        console.error(chalk.dim('   2. Insufficient liquidity for this token'));
+        console.error(chalk.dim('   3. Token not supported by 0x on this chain'));
+        return { success: false, error: 'Quote missing transaction data - check API key and token support' };
+      }
+
+      // Debug: log quote info
       console.log(`   Expected tokens: ${formatEther(BigInt(quote.buyAmount))}`);
-      console.log(chalk.dim(`   Quote fields: to=${quote.to?.slice(0, 20)}..., data=${quote.data?.slice(0, 20)}..., value=${quote.value}, gas=${quote.gas}, gasPrice=${quote.gasPrice}`));
+      console.log(chalk.dim(`   TX to: ${quote.to?.slice(0, 20)}..., gas: ${quote.gas}`));
 
       // Dry-run: simulate without sending
       if (this.dryRun) {
@@ -491,18 +503,6 @@ export class TradingBot {
       }
 
       console.log(`   Executing transaction...`);
-
-      // Validate quote fields before using
-      if (!quote.to || !quote.data || quote.value === undefined || quote.gas === undefined || quote.gasPrice === undefined) {
-        console.error('   Quote missing required fields:', {
-          to: !!quote.to,
-          data: !!quote.data,
-          value: quote.value,
-          gas: quote.gas,
-          gasPrice: quote.gasPrice,
-        });
-        return { success: false, error: 'Invalid quote from 0x - missing transaction data' };
-      }
 
       // Send transaction
       const txHash = await (this.walletClient as any).sendTransaction({

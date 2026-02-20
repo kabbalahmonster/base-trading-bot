@@ -4,6 +4,7 @@
  * @version 1.4.0
  */
 
+import chalk from 'chalk';
 import axios, { AxiosInstance } from 'axios';
 import { ZeroXQuote, Chain } from '../types/index.js';
 
@@ -45,6 +46,11 @@ export class ZeroXApi {
         ...(apiKey && { '0x-api-key': apiKey }),
       },
     });
+
+    if (!apiKey) {
+      console.log(chalk.yellow('⚠️  No 0x API key provided. Trading may fail or be rate-limited.'));
+      console.log(chalk.dim('   Get a free key at: https://dashboard.0x.org/apps'));
+    }
   }
 
   /**
@@ -90,6 +96,22 @@ export class ZeroXApi {
           taker: takerAddress,
         },
       });
+
+      // Debug: log full response structure
+      console.log(chalk.dim(`   0x API response keys: ${Object.keys(response.data).join(', ')}`));
+      
+      // Check if this is an error response
+      if (response.data.error) {
+        console.error('   0x API returned error:', response.data.error);
+        return null;
+      }
+
+      // Check if we have transaction data
+      if (!response.data.to || !response.data.data) {
+        console.error('   0x API returned price quote but no transaction data');
+        console.error('   This usually means:', response.data.reason || 'API key issue or insufficient liquidity');
+        return null;
+      }
 
       return response.data;
     } catch (error: any) {
