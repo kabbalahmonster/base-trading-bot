@@ -115,6 +115,12 @@ export interface GridConfig {
   // Gas estimate fallback
   /** Fallback gas cost in ETH when 0x API doesn't provide estimates (default: 0.00001) */
   fallbackGasEstimate?: number;
+
+  // Strict profit mode
+  /** Enable strict minimum profit check (default: true) */
+  strictProfitMode?: boolean;
+  /** Strict minimum profit percent (default: 2%) */
+  strictProfitPercent?: number;
 }
 
 /**

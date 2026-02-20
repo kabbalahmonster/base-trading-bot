@@ -323,6 +323,8 @@ export class TradingBot {
   /**
    * Check and execute sell opportunities
    */
+  private lastSellCheckLog: Map<number, number> = new Map();
+
   private async checkSells(currentPrice: number): Promise<void> {
     const positions = GridCalculator.findSellPositions(
       this.instance.positions,
@@ -332,35 +334,50 @@ export class TradingBot {
     for (const position of positions) {
       if (!position.tokensReceived || position.status !== 'HOLDING') continue;
 
-      console.log(`\n💰 Sell opportunity: Position ${position.id} at ${GridCalculator.formatPrice(currentPrice)} ETH`);
-
       // Calculate moon bag amount
       let sellAmount = position.tokensReceived;
+      let moonBagAmount: bigint | undefined;
       if (this.instance.config.moonBagEnabled) {
-        const moonBagAmount = (BigInt(sellAmount) * BigInt(this.instance.config.moonBagPercent)) / BigInt(100);
+        moonBagAmount = (BigInt(sellAmount) * BigInt(this.instance.config.moonBagPercent)) / BigInt(100);
         sellAmount = (BigInt(sellAmount) - moonBagAmount).toString();
-        console.log(`   Moon bag: Keeping ${formatEther(moonBagAmount)} tokens`);
       }
 
-      // Check profitability with STRICT 2% minimum guarantee
-      // Requires: ETH received >= (buy cost + gas) * 1.02
+      // Check profitability with configurable strict minimum
       const fallbackGasEth = this.instance.config.fallbackGasEstimate ?? 0.00001;
+      const strictMode = this.instance.config.strictProfitMode ?? true;
+      const strictPercent = this.instance.config.strictProfitPercent ?? 2;
       const { profitable, quote, actualProfit, strictCheck } = await this.zeroXApi.isProfitable(
         this.instance.tokenAddress,
         sellAmount,
         position.ethCost || '0',
         this.instance.config.minProfitPercent,
         this.instance.walletAddress,
-        true, // strict mode enabled
-        fallbackGasEth
+        strictMode,
+        fallbackGasEth,
+        strictPercent
       );
 
       if (!profitable || !quote) {
-        const reason = strictCheck === false 
-          ? `fails strict 2% minimum (need >= (cost + gas) * 1.02)`
-          : `not profitable yet`;
-        console.log(`   ⏸ Sell skipped: ${reason} (current: ${actualProfit.toFixed(2)}%)`);
+        // Only log once every 60 seconds to reduce spam
+        const lastLog = this.lastSellCheckLog.get(position.id) || 0;
+        const now = Date.now();
+        if (now - lastLog > 60000) {
+          const reason = strictCheck === false 
+            ? `fails strict ${strictPercent}% minimum`
+            : `not profitable yet`;
+          console.log(`\n💰 Sell check: Position ${position.id} at ${GridCalculator.formatPrice(currentPrice)} ETH`);
+          if (moonBagAmount) {
+            console.log(`   Moon bag: Keeping ${formatEther(moonBagAmount)} tokens`);
+          }
+          console.log(`   ⏸ ${reason} (current: ${actualProfit.toFixed(2)}%)`);
+          this.lastSellCheckLog.set(position.id, now);
+        }
         continue;
+      }
+
+      console.log(`\n💰 Sell opportunity: Position ${position.id} at ${GridCalculator.formatPrice(currentPrice)} ETH`);
+      if (moonBagAmount) {
+        console.log(`   Moon bag: Keeping ${formatEther(moonBagAmount)} tokens`);
       }
 
       console.log(`   ✅ Meets strict 2% profit requirement - Executing sell...`);

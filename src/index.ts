@@ -551,6 +551,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
   // Get default settings from storage
   const defaultGasReserve = await storage.getConfig('gasReserveEth', 0.0005);
   const defaultFallbackGas = await storage.getConfig('fallbackGasEstimate', 0.00001);
+  const defaultStrictMode = await storage.getConfig('strictProfitMode', true);
+  const defaultStrictPercent = await storage.getConfig('strictProfitPercent', 2);
 
   // Create config
   const config: GridConfig = isVolumeBot
@@ -573,6 +575,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         buyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
         gasReserveEth: defaultGasReserve,
         fallbackGasEstimate: defaultFallbackGas,
+        strictProfitMode: defaultStrictMode,
+        strictProfitPercent: defaultStrictPercent,
         volumeMode: true,
         volumeBuysPerCycle: answers.volumeBuysPerCycle || 3,
         volumeBuyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
@@ -598,6 +602,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         buyAmount: answers.useFixedBuyAmount ? parseFloat(answers.buyAmount || '0.001') : 0,
         gasReserveEth: defaultGasReserve,
         fallbackGasEstimate: defaultFallbackGas,
+        strictProfitMode: defaultStrictMode,
+        strictProfitPercent: defaultStrictPercent,
         heartbeatMs: 1000,
         skipHeartbeats: 0,
       };
@@ -4048,6 +4054,8 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
   // Get current settings from storage
   const currentGasReserve = await storage.getConfig('gasReserveEth', 0.0005);
   const currentFallbackGas = await storage.getConfig('fallbackGasEstimate', 0.00001);
+  const currentStrictMode = await storage.getConfig('strictProfitMode', true);
+  const currentStrictPercent = await storage.getConfig('strictProfitPercent', 2);
 
   const { setting } = await inquirer.prompt([
     {
@@ -4059,6 +4067,7 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
         { name: '📺 Live monitor refresh rate', value: 'monitor_refresh' },
         { name: `⛽ Gas reserve (current: ${currentGasReserve} ETH)`, value: 'gas_reserve' },
         { name: `🔧 Fallback gas estimate (current: ${currentFallbackGas} ETH)`, value: 'fallback_gas' },
+        { name: `🔒 Strict profit mode (${currentStrictMode ? 'ON' : 'OFF'} ${currentStrictPercent}%)`, value: 'strict_profit' },
         { name: '📊 Default price oracle confidence', value: 'confidence' },
         { name: '🔔 Global notification settings', value: 'notifications' },
         { name: '⬅️  Back', value: 'back' },
@@ -4202,6 +4211,53 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
     }
 
     console.log(chalk.green(`\n✓ Fallback gas estimate set to ${newFallbackGas} ETH`));
+    console.log(chalk.dim('Applied to all bots immediately.\n'));
+  }
+
+  if (setting === 'strict_profit') {
+    console.log(chalk.cyan('\n🔒 Strict Profit Mode\n'));
+    console.log(chalk.dim('When enabled, sells only execute if ETH received >= (cost + gas) * (1 + profit%).'));
+    console.log(chalk.dim('This guarantees a minimum profit on every trade after gas costs.\n'));
+
+    const { strictMode } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'strictMode',
+        message: 'Enable strict profit mode?',
+        default: currentStrictMode,
+      },
+    ]);
+
+    let strictPercent = currentStrictPercent;
+    if (strictMode) {
+      const { percent } = await inquirer.prompt([
+        {
+          type: 'number',
+          name: 'percent',
+          message: 'Minimum profit percent (after gas):',
+          default: currentStrictPercent,
+          validate: (input) => input >= 0 || 'Must be 0 or positive',
+        },
+      ]);
+      strictPercent = percent;
+    }
+
+    await storage.setConfig('strictProfitMode', strictMode);
+    await storage.setConfig('strictProfitPercent', strictPercent);
+
+    // Update all bots
+    const bots = await storage.getAllBots();
+    for (const bot of bots) {
+      bot.config.strictProfitMode = strictMode;
+      bot.config.strictProfitPercent = strictPercent;
+      bot.lastUpdated = Date.now();
+      await storage.saveBot(bot);
+    }
+
+    console.log(chalk.green(`\n✓ Strict profit mode ${strictMode ? 'ENABLED' : 'DISABLED'}`));
+    if (strictMode) {
+      console.log(chalk.dim(`  Minimum profit: ${strictPercent}% after gas`));
+    }
     console.log(chalk.dim('Applied to all bots immediately.\n'));
   }
 

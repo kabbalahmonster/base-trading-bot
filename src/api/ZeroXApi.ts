@@ -219,7 +219,8 @@ export class ZeroXApi {
     minProfitPercent: number,
     takerAddress: string,
     strictMode: boolean = true,
-    fallbackGasEth: number = 0.00001
+    fallbackGasEth: number = 0.00001,
+    strictProfitPercent: number = 2
   ): Promise<{ profitable: boolean; quote: ZeroXQuote | null; actualProfit: number; strictCheck?: boolean }> {
     const quote = await this.getSellQuote(tokenAddress, tokenAmount, takerAddress);
 
@@ -251,10 +252,11 @@ export class ZeroXApi {
     const profit = netEth - ethCost;
     const profitPercent = ethCost > 0 ? Number((profit * BigInt(10000)) / ethCost) / 100 : 0;
 
-    // STRICT MODE: Enforce minimum received ETH >= (cost + gas) * 1.02
-    // This guarantees at least 2% profit on every trade
+    // STRICT MODE: Enforce minimum received ETH >= (cost + gas) * (1 + strictProfitPercent/100)
+    // This guarantees at least strictProfitPercent profit on every trade
     if (strictMode) {
-      const minRequiredEth = ((ethCost + gasCost) * BigInt(102)) / BigInt(100);
+      const multiplier = BigInt(10000 + Math.floor(strictProfitPercent * 100));
+      const minRequiredEth = ((ethCost + gasCost) * multiplier) / BigInt(10000);
       const meetsStrictMinimum = ethReceived >= minRequiredEth;
 
       return {
