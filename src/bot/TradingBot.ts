@@ -324,12 +324,16 @@ export class TradingBot {
    * Check and execute sell opportunities
    */
   private lastSellCheckLog: Map<number, number> = new Map();
+  private loggedFallbackGasThisTick: boolean = false;
 
   private async checkSells(currentPrice: number): Promise<void> {
     const positions = GridCalculator.findSellPositions(
       this.instance.positions,
       currentPrice
     );
+
+    // Reset the flag at the start of each tick
+    this.loggedFallbackGasThisTick = false;
 
     for (const position of positions) {
       if (!position.tokensReceived || position.status !== 'HOLDING') continue;
@@ -346,7 +350,7 @@ export class TradingBot {
       const fallbackGasEth = this.instance.config.fallbackGasEstimate ?? 0.00001;
       const strictMode = this.instance.config.strictProfitMode ?? true;
       const strictPercent = this.instance.config.strictProfitPercent ?? 2;
-      const { profitable, quote, actualProfit, strictCheck } = await this.zeroXApi.isProfitable(
+      const { profitable, quote, actualProfit, strictCheck, usedFallbackGas } = await this.zeroXApi.isProfitable(
         this.instance.tokenAddress,
         sellAmount,
         position.ethCost || '0',
@@ -354,8 +358,14 @@ export class TradingBot {
         this.instance.walletAddress,
         strictMode,
         fallbackGasEth,
-        strictPercent
+        strictPercent,
+        !this.loggedFallbackGasThisTick // Only log once per tick
       );
+
+      // Track if we used fallback gas this tick
+      if (usedFallbackGas) {
+        this.loggedFallbackGasThisTick = true;
+      }
 
       if (!profitable || !quote) {
         // Only log once every 60 seconds to reduce spam

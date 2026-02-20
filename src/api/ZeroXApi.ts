@@ -220,8 +220,9 @@ export class ZeroXApi {
     takerAddress: string,
     strictMode: boolean = true,
     fallbackGasEth: number = 0.00001,
-    strictProfitPercent: number = 2
-  ): Promise<{ profitable: boolean; quote: ZeroXQuote | null; actualProfit: number; strictCheck?: boolean }> {
+    strictProfitPercent: number = 2,
+    logFallback: boolean = true
+  ): Promise<{ profitable: boolean; quote: ZeroXQuote | null; actualProfit: number; strictCheck?: boolean; usedFallbackGas?: boolean }> {
     const quote = await this.getSellQuote(tokenAddress, tokenAmount, takerAddress);
 
     if (!quote) {
@@ -239,12 +240,16 @@ export class ZeroXApi {
 
     // Handle missing gas estimates - use configured fallback
     let gasCost: bigint;
+    let usedFallbackGas = false;
     if (quote.gas && quote.gasPrice) {
       gasCost = BigInt(quote.gas) * BigInt(quote.gasPrice);
     } else {
       // Use configured fallback gas estimate (default: 0.00001 ETH)
       gasCost = parseEther(fallbackGasEth.toString());
-      console.log(chalk.yellow(`   ⚠ Using estimated gas cost: ${fallbackGasEth} ETH`));
+      usedFallbackGas = true;
+      if (logFallback) {
+        console.log(chalk.yellow(`   ⚠ Using estimated gas cost: ${fallbackGasEth} ETH`));
+      }
     }
 
     // Calculate actual profit after gas
@@ -264,6 +269,7 @@ export class ZeroXApi {
         quote,
         actualProfit: profitPercent,
         strictCheck: meetsStrictMinimum,
+        usedFallbackGas,
       };
     }
 
@@ -274,6 +280,7 @@ export class ZeroXApi {
       profitable: profit >= minProfit,
       quote,
       actualProfit: profitPercent,
+      usedFallbackGas,
     };
   }
 
