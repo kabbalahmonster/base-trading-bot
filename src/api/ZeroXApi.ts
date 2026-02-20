@@ -100,6 +100,17 @@ export class ZeroXApi {
       // Debug: log full response structure
       console.log(chalk.dim(`   0x API response keys: ${Object.keys(response.data).join(', ')}`));
       
+      // Check if transaction data might be nested differently (0x API v2 format)
+      if (response.data.transaction) {
+        console.log(chalk.dim(`   Found nested transaction object`));
+        // Merge transaction data into top level for compatibility
+        response.data.to = response.data.transaction.to;
+        response.data.data = response.data.transaction.data;
+        response.data.value = response.data.transaction.value;
+        response.data.gas = response.data.transaction.gas;
+        response.data.gasPrice = response.data.transaction.gasPrice;
+      }
+      
       // Check if this is an error response
       if (response.data.error) {
         console.error('   0x API returned error:', response.data.error);
@@ -109,7 +120,10 @@ export class ZeroXApi {
       // Check if we have transaction data
       if (!response.data.to || !response.data.data) {
         console.error('   0x API returned price quote but no transaction data');
-        console.error('   This usually means:', response.data.reason || 'API key issue or insufficient liquidity');
+        console.error('   Response has buyAmount:', !!response.data.buyAmount);
+        console.error('   Response has to:', !!response.data.to);
+        console.error('   Response has data:', !!response.data.data);
+        console.error('   Check if transaction data is nested under a different key');
         return null;
       }
 
