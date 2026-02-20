@@ -963,12 +963,6 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
       console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
       return;
     }
-    refreshCount++;
-    if (refreshCount > maxRefreshes) {
-      clearInterval(interval);
-      console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
-      return;
-    }
 
     // Move cursor to top instead of clearing (prevents flickering)
     // Only clear on first run, then just overwrite
