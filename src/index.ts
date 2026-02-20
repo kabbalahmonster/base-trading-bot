@@ -268,7 +268,9 @@ async function main() {
     if (action === 'exit_keep') {
       console.log(chalk.cyan('\n👋 Exiting CLI. Bots continue running in background.\n'));
       console.log(chalk.dim('To stop bots later, restart and select "Exit and stop all bots"\n'));
-      break;
+      // Don't stop heartbeat manager - let bots keep running
+      process.exitCode = 0;
+      return;
     }
     
     if (action === 'exit_stop') {
@@ -922,14 +924,10 @@ async function monitorBots(storage: JsonStorage, heartbeatManager: HeartbeatMana
 }
 
 async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: HeartbeatManager) {
-  console.log(chalk.dim('Press X to exit, or wait 60 seconds\n'));
-
-  // Get working RPC
-  const workingRpc = await getWorkingRpc();
-
+  let autoRefresh = false;
   let refreshCount = 0;
-  const maxRefreshes = 60; // Run for 60 seconds
   let shouldExit = false;
+  let refreshInterval: NodeJS.Timeout | null = null;
 
   // Setup keypress listener
   const stdin = process.stdin;
@@ -937,48 +935,23 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
   stdin.resume();
   stdin.setEncoding('utf8');
 
-  const keyListener = (key: string) => {
-    if (key.toLowerCase() === 'x') {
-      shouldExit = true;
-      stdin.setRawMode(false);
-      stdin.pause();
-      stdin.removeListener('data', keyListener);
-    }
-  };
-  stdin.on('data', keyListener);
-
-  const interval = setInterval(async () => {
-    if (shouldExit) {
-      clearInterval(interval);
-      console.log(chalk.dim('\nExiting monitor...\n'));
-      return;
-    }
-
-    refreshCount++;
-    if (refreshCount > maxRefreshes) {
-      clearInterval(interval);
-      stdin.setRawMode(false);
-      stdin.pause();
-      stdin.removeListener('data', keyListener);
-      console.log(chalk.dim('\nMonitor session ended. Returning to menu...\n'));
-      return;
-    }
-
-    // Move cursor to top instead of clearing (prevents flickering)
-    // Only clear on first run, then just overwrite
-    if (refreshCount === 1) {
-      console.log('\x1Bc'); // Clear on first run only
-    } else {
-      process.stdout.write('\x1B[0f'); // Move to top-left without clear
-    }
-
+  const displayFleet = async () => {
     const timestamp = new Date().toLocaleTimeString();
     const dateStr = new Date().toLocaleDateString();
+    refreshCount++;
+
+    // Clear screen
+    console.log('\x1Bc');
 
     // Header
     console.log(chalk.bgCyan.black('╔══════════════════════════════════════════════════════════════════╗'));
     console.log(chalk.bgCyan.black(`║  🤖 BASE GRID BOT FLEET OVERVIEW          ${dateStr} ${timestamp}  ║`));
     console.log(chalk.bgCyan.black('╚══════════════════════════════════════════════════════════════════╝'));
+    console.log();
+
+    // Controls hint
+    console.log(chalk.dim('  Controls: [R] Refresh  [A] Toggle Auto-refresh  [X] Exit'));
+    console.log(chalk.yellow(`  Auto-refresh: ${autoRefresh ? 'ON' : 'OFF'}`));
     console.log();
 
     // System Stats
@@ -1055,17 +1028,60 @@ async function monitorAllBots(enabledBots: BotInstance[], heartbeatManager: Hear
 
     // Footer
     console.log(chalk.dim('─'.repeat(66)));
-    console.log(chalk.dim(`  Refresh: ${refreshCount}/${maxRefreshes}s | Press X to exit | RPC: ${workingRpc.slice(0, 30)}...`));
+    console.log(chalk.dim(`  Refresh #${refreshCount} | Press R to refresh | A to toggle auto | X to exit`));
     console.log();
+  };
 
-  }, 3000); // 3 second refresh (was 1 second - too flickery)
+  // Initial display
+  await displayFleet();
 
-  await new Promise(resolve => setTimeout(resolve, (maxRefreshes + 1) * 3000));
+  const keyListener = (key: string) => {
+    const lowerKey = key.toLowerCase();
+
+    if (lowerKey === 'x') {
+      shouldExit = true;
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener('data', keyListener);
+      console.log(chalk.dim('\nExiting monitor...\n'));
+    } else if (lowerKey === 'r') {
+      // Manual refresh
+      displayFleet();
+    } else if (lowerKey === 'a') {
+      // Toggle auto-refresh
+      autoRefresh = !autoRefresh;
+      if (autoRefresh) {
+        refreshInterval = setInterval(displayFleet, 3000);
+      } else if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
+      displayFleet(); // Show updated status
+    }
+  };
+
+  stdin.on('data', keyListener);
+
+  // Wait for exit
+  while (!shouldExit) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
 
   // Cleanup
-  stdin.setRawMode(false);
-  stdin.pause();
-  stdin.removeListener('data', keyListener);
+  if (refreshInterval) {
+    clearInterval(refreshInterval);
+  }
+  try {
+    stdin.setRawMode(false);
+    stdin.pause();
+    stdin.removeListener('data', keyListener);
+  } catch {
+    // Ignore cleanup errors
+  }
 }
 
 async function monitorSingleBot(enabledBots: BotInstance[], _heartbeatManager: HeartbeatManager) {
