@@ -269,7 +269,7 @@ export class TradingBot {
     } else {
       // Auto-calculate based on available balance
       const ethBalance = await this.getEthBalance();
-      const minReserve = 0.0005; // Keep some ETH for gas
+      const minReserve = this.instance.config.gasReserveEth ?? 0.0005; // Configurable gas reserve
       const availableEth = Math.max(0, ethBalance - minReserve);
       
       // Distribute equally across remaining positions

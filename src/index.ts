@@ -548,6 +548,9 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     botWalletAddress = botWallet.address;
   }
 
+  // Get default gas reserve from storage
+  const defaultGasReserve = await storage.getConfig('gasReserveEth', 0.0005);
+
   // Create config
   const config: GridConfig = isVolumeBot
     ? {
@@ -567,6 +570,7 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         maxActivePositions: 1, // Single "position" for tracking
         useFixedBuyAmount: true,
         buyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
+        gasReserveEth: defaultGasReserve,
         volumeMode: true,
         volumeBuysPerCycle: answers.volumeBuysPerCycle || 3,
         volumeBuyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
@@ -590,6 +594,7 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         maxActivePositions: answers.maxActivePositions,
         useFixedBuyAmount: answers.useFixedBuyAmount || false,
         buyAmount: answers.useFixedBuyAmount ? parseFloat(answers.buyAmount || '0.001') : 0,
+        gasReserveEth: defaultGasReserve,
         heartbeatMs: 1000,
         skipHeartbeats: 0,
       };
@@ -3987,6 +3992,9 @@ async function runDiagnostic(storage: JsonStorage, _heartbeatManager: HeartbeatM
 async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatManager) {
   console.log(chalk.cyan('\n⚙️  System Settings\n'));
 
+  // Get current gas reserve from storage
+  const currentGasReserve = await storage.getConfig('gasReserveEth', 0.0005);
+
   const { setting } = await inquirer.prompt([
     {
       type: 'list',
@@ -3995,6 +4003,7 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
       choices: [
         { name: `⏱️  Heartbeat interval (current: ${heartbeatManager.getInterval()}ms)`, value: 'heartbeat' },
         { name: '📺 Live monitor refresh rate', value: 'monitor_refresh' },
+        { name: `⛽ Gas reserve (current: ${currentGasReserve} ETH)`, value: 'gas_reserve' },
         { name: '📊 Default price oracle confidence', value: 'confidence' },
         { name: '🔔 Global notification settings', value: 'notifications' },
         { name: '⬅️  Back', value: 'back' },
@@ -4069,6 +4078,41 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
     await storage.setConfig('monitorRefreshRate', refreshRate);
     console.log(chalk.green(`\n✓ Monitor refresh rate set to ${refreshRate}ms`));
     console.log(chalk.dim('Will apply to new monitor sessions.\n'));
+  }
+
+  if (setting === 'gas_reserve') {
+    console.log(chalk.cyan('\n⛽ Gas Reserve Amount\n'));
+    console.log(chalk.dim('This is the amount of ETH kept in reserve for gas fees.'));
+    console.log(chalk.dim('It is subtracted from your balance when auto-calculating buy amounts.\n'));
+    console.log(chalk.dim(`Current: ${currentGasReserve} ETH`));
+    console.log(chalk.dim('Recommended: 0.0005 - 0.001 ETH for Base\n'));
+
+    const { gasReserve } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'gasReserve',
+        message: 'Enter gas reserve amount (ETH):',
+        default: String(currentGasReserve),
+        validate: (input) => {
+          const val = parseFloat(input);
+          return (!isNaN(val) && val >= 0) || 'Must be a positive number';
+        },
+      },
+    ]);
+
+    const newReserve = parseFloat(gasReserve);
+    await storage.setConfig('gasReserveEth', newReserve);
+
+    // Update all bots to use new reserve
+    const bots = await storage.getAllBots();
+    for (const bot of bots) {
+      bot.config.gasReserveEth = newReserve;
+      bot.lastUpdated = Date.now();
+      await storage.saveBot(bot);
+    }
+
+    console.log(chalk.green(`\n✓ Gas reserve set to ${newReserve} ETH`));
+    console.log(chalk.dim('Applied to all bots immediately.\n'));
   }
 
   if (setting === 'confidence') {

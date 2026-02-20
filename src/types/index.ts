@@ -77,6 +77,8 @@ export interface GridConfig {
   buyAmount: number;
   /** Use fixed amount vs auto-distribute (default: false) */
   useFixedBuyAmount: boolean;
+  /** ETH to reserve for gas when auto-calculating buy amount (default: 0.0005) */
+  gasReserveEth?: number;
 
   // Price Oracle settings
   /** Enable Chainlink + Uniswap TWAP validation (default: false) */
