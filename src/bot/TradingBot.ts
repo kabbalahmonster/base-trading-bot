@@ -167,6 +167,7 @@ export class TradingBot {
       if (!currentPrice || currentPrice <= 0) {
         currentPrice = await this.getCurrentPrice();
       }
+      console.log(chalk.dim(`    Generating ${this.instance.config.numPositions} grid positions...`));
       this.instance.positions = GridCalculator.generateGrid(currentPrice, this.instance.config);
       this.instance.currentPrice = currentPrice;
       await this.storage.saveBot(this.instance);

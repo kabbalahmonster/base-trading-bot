@@ -138,10 +138,14 @@ console.log(chalk.cyan.bold('\n🤖 Multi-Chain Grid Trading Bot\n'));
 console.log(chalk.dim('Supports: Base and Ethereum Mainnet\n'));
 
 async function main() {
+  console.log(chalk.dim('  Loading storage...'));
   const storage = new JsonStorage('./bots.json');
   await storage.init();
 
+  console.log(chalk.dim('  Initializing wallet manager...'));
   const walletManager = new WalletManager();
+  
+  console.log(chalk.dim('  Connecting to 0x API...'));
   const zeroXApi = new ZeroXApi(ZEROX_API_KEY);
 
   // Initialize PnL Tracker with storage (JsonStorage now includes trade history)
@@ -176,6 +180,7 @@ async function main() {
   }
 
   // Initialize Notification Service from environment
+  console.log(chalk.dim('  Initializing services...'));
   const notificationService = NotificationService.getInstance();
   notificationService.initializeFromEnv();
   if (notificationService.isConfigured()) {

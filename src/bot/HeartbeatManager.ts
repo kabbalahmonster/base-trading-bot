@@ -1,5 +1,6 @@
 // src/bot/HeartbeatManager.ts
 
+import chalk from 'chalk';
 import { TradingBot } from './TradingBot.js';
 import { BotInstance } from '../types/index.js';
 import { WalletManager } from '../wallet/WalletManager.js';
@@ -62,6 +63,10 @@ export class HeartbeatManager {
     const runningInstances = instances.filter(i => i.isRunning);
     
     if (runningInstances.length === 0) return;
+    
+    if (runningInstances.length > 1) {
+      console.log(chalk.dim(`  Starting ${runningInstances.length} bots...`));
+    }
     
     // Load bots in parallel for faster startup
     await Promise.all(runningInstances.map(instance => this.addBot(instance)));
