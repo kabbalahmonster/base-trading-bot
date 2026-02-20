@@ -56,11 +56,32 @@ function getDefaultRpc(chain: Chain): string {
   return chain === 'base' ? RPC_URL : ETH_RPC_URL;
 }
 
+// Cache for working RPC to avoid repeated testing
+let workingRpcCache: Record<Chain, string | null> = {
+  base: null,
+  ethereum: null,
+};
+let lastRpcCheck: Record<Chain, number> = {
+  base: 0,
+  ethereum: 0,
+};
+const RPC_CACHE_TTL = 60000; // 1 minute cache
+
 /**
  * Get a working RPC URL with fallback support for a specific chain
  * Uses timeout to prevent hanging on slow/unresponsive RPCs
+ * Caches results to speed up repeated calls
  */
-async function getWorkingRpc(chain: Chain = 'base'): Promise<string> {
+async function getWorkingRpc(chain: Chain = 'base', forceCheck: boolean = false): Promise<string> {
+  const now = Date.now();
+  const cached = workingRpcCache[chain];
+  const cacheAge = now - lastRpcCheck[chain];
+  
+  // Use cached RPC if fresh and not forcing a check
+  if (!forceCheck && cached && cacheAge < RPC_CACHE_TTL) {
+    return cached;
+  }
+  
   const defaultRpc = getDefaultRpc(chain);
   const fallbacks = RPC_FALLBACKS[chain];
   
@@ -77,27 +98,29 @@ async function getWorkingRpc(chain: Chain = 'base'): Promise<string> {
       
       const client = createPublicClient({
         chain: chainConfig,
-        transport: http(rpc, { timeout: 5000 }), // 5 second timeout
+        transport: http(rpc, { timeout: 3000 }), // 3 second timeout (was 5)
       });
       
       // Test connection with a simple block number request (with timeout)
       const blockNumberPromise = client.getBlockNumber();
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 5000)
+        setTimeout(() => reject(new Error('Timeout')), 3000)
       );
       await Promise.race([blockNumberPromise, timeoutPromise]);
       
-      // Success! Update current RPC
+      // Success! Update current RPC and cache
       currentRpcUrls[chain] = rpc;
+      workingRpcCache[chain] = rpc;
+      lastRpcCheck[chain] = now;
       
-      if (i > 0) {
+      if (i > 0 && forceCheck) {
         console.log(chalk.green(`✓ Switched to working RPC: ${rpc}`));
       }
       
       return rpc;
     } catch (error: any) {
       // Only log if not a timeout (timeouts are expected with public RPCs)
-      if (!error.message?.includes('Timeout')) {
+      if (!error.message?.includes('Timeout') && forceCheck) {
         console.log(chalk.dim(`  RPC unavailable: ${rpc.slice(0, 30)}...`));
       }
       continue;
@@ -105,7 +128,9 @@ async function getWorkingRpc(chain: Chain = 'base'): Promise<string> {
   }
   
   // All RPCs failed, return default and let it fail later with proper error
-  console.log(chalk.red(`✗ All ${chain} RPC endpoints failed. Using default.`));
+  if (forceCheck) {
+    console.log(chalk.red(`✗ All ${chain} RPC endpoints failed. Using default.`));
+  }
   return defaultRpc;
 }
 
