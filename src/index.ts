@@ -3020,11 +3020,20 @@ async function reconfigureBot(storage: JsonStorage) {
     bot.lastUpdated = Date.now();
     await storage.saveBot(bot);
 
+    // Count actual holding positions after merge
+    const finalHoldingCount = newPositions.filter(p => p.status === 'HOLDING').length;
+    const mergedCount = holdingPositions.length - finalHoldingCount;
+
     console.log(chalk.green('\n✓ Positions regenerated successfully'));
     console.log(chalk.cyan(`\n📊 New Grid Configuration:`));
     console.log(`  Total positions: ${newPositions.length}`);
     console.log(`  Price range: ${bot.config.floorPrice?.toExponential(6)} - ${bot.config.ceilingPrice?.toExponential(6)} ETH`);
-    console.log(`  Holding positions preserved: ${holdingPositions.length}`);
+    console.log(`  Original holdings: ${holdingPositions.length}`);
+    if (mergedCount > 0) {
+      console.log(`  Final holdings: ${finalHoldingCount} (${mergedCount} merged)`);
+    } else {
+      console.log(`  Holdings preserved: ${finalHoldingCount}`);
+    }
     console.log(`  Empty positions: ${newPositions.filter(p => p.status === 'EMPTY').length}`);
     
     if (newPositions.length > 0) {
