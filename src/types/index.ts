@@ -121,6 +121,14 @@ export interface GridConfig {
   strictProfitMode?: boolean;
   /** Strict minimum profit percent (default: 2%) */
   strictProfitPercent?: number;
+
+  // Slippage tolerance
+  /** Slippage tolerance in basis points (100 = 1%, default: 100) */
+  slippageBps?: number;
+
+  // Retry settings
+  /** Seconds to wait after failed trade before retrying (default: 30) */
+  retryDelaySeconds?: number;
 }
 
 /**

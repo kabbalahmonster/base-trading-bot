@@ -553,6 +553,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
   const defaultFallbackGas = await storage.getConfig('fallbackGasEstimate', 0.00001);
   const defaultStrictMode = await storage.getConfig('strictProfitMode', true);
   const defaultStrictPercent = await storage.getConfig('strictProfitPercent', 2);
+  const defaultSlippage = await storage.getConfig('slippageBps', 100);
+  const defaultRetryDelay = await storage.getConfig('retryDelaySeconds', 30);
 
   // Create config
   const config: GridConfig = isVolumeBot
@@ -577,6 +579,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         fallbackGasEstimate: defaultFallbackGas,
         strictProfitMode: defaultStrictMode,
         strictProfitPercent: defaultStrictPercent,
+        slippageBps: defaultSlippage,
+        retryDelaySeconds: defaultRetryDelay,
         volumeMode: true,
         volumeBuysPerCycle: answers.volumeBuysPerCycle || 3,
         volumeBuyAmount: parseFloat(answers.volumeBuyAmount || '0.001'),
@@ -604,6 +608,8 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
         fallbackGasEstimate: defaultFallbackGas,
         strictProfitMode: defaultStrictMode,
         strictProfitPercent: defaultStrictPercent,
+        slippageBps: defaultSlippage,
+        retryDelaySeconds: defaultRetryDelay,
         heartbeatMs: 1000,
         skipHeartbeats: 0,
       };
@@ -4056,6 +4062,8 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
   const currentFallbackGas = await storage.getConfig('fallbackGasEstimate', 0.00001);
   const currentStrictMode = await storage.getConfig('strictProfitMode', true);
   const currentStrictPercent = await storage.getConfig('strictProfitPercent', 2);
+  const currentSlippage = await storage.getConfig('slippageBps', 100);
+  const currentRetryDelay = await storage.getConfig('retryDelaySeconds', 30);
 
   const { setting } = await inquirer.prompt([
     {
@@ -4068,6 +4076,8 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
         { name: `⛽ Gas reserve (current: ${currentGasReserve} ETH)`, value: 'gas_reserve' },
         { name: `🔧 Fallback gas estimate (current: ${currentFallbackGas} ETH)`, value: 'fallback_gas' },
         { name: `🔒 Strict profit mode (${currentStrictMode ? 'ON' : 'OFF'} ${currentStrictPercent}%)`, value: 'strict_profit' },
+        { name: `📉 Slippage tolerance (${currentSlippage/100}%)`, value: 'slippage' },
+        { name: `⏳ Retry delay (${currentRetryDelay}s)`, value: 'retry_delay' },
         { name: '📊 Default price oracle confidence', value: 'confidence' },
         { name: '🔔 Global notification settings', value: 'notifications' },
         { name: '⬅️  Back', value: 'back' },
@@ -4258,6 +4268,69 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
     if (strictMode) {
       console.log(chalk.dim(`  Minimum profit: ${strictPercent}% after gas`));
     }
+    console.log(chalk.dim('Applied to all bots immediately.\n'));
+  }
+
+  if (setting === 'slippage') {
+    console.log(chalk.cyan('\n📉 Slippage Tolerance\n'));
+    console.log(chalk.dim('Higher slippage = more likely to succeed but worse price.'));
+    console.log(chalk.dim('Lower slippage = better price but may fail if market moves.\n'));
+    console.log(chalk.dim(`Current: ${currentSlippage/100}% (${currentSlippage} bps)`));
+    console.log(chalk.dim('Recommended: 1-3% for most tokens\n'));
+
+    const { slippagePercent } = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'slippagePercent',
+        message: 'Slippage tolerance (%):',
+        default: currentSlippage / 100,
+        validate: (input) => input >= 0.1 && input <= 10 || 'Must be 0.1-10%',
+      },
+    ]);
+
+    const newSlippageBps = Math.round(slippagePercent * 100);
+    await storage.setConfig('slippageBps', newSlippageBps);
+
+    // Update all bots
+    const bots = await storage.getAllBots();
+    for (const bot of bots) {
+      bot.config.slippageBps = newSlippageBps;
+      bot.lastUpdated = Date.now();
+      await storage.saveBot(bot);
+    }
+
+    console.log(chalk.green(`\n✓ Slippage tolerance set to ${slippagePercent}%`));
+    console.log(chalk.dim('Applied to all bots immediately.\n'));
+  }
+
+  if (setting === 'retry_delay') {
+    console.log(chalk.cyan('\n⏳ Retry Delay\n'));
+    console.log(chalk.dim('How long to wait after a failed trade before retrying.'));
+    console.log(chalk.dim('Prevents rapid-fire retries that waste gas on reverting transactions.\n'));
+    console.log(chalk.dim(`Current: ${currentRetryDelay} seconds`));
+    console.log(chalk.dim('Recommended: 30-60 seconds\n'));
+
+    const { retryDelay } = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'retryDelay',
+        message: 'Retry delay (seconds):',
+        default: currentRetryDelay,
+        validate: (input) => input >= 5 && input <= 300 || 'Must be 5-300 seconds',
+      },
+    ]);
+
+    await storage.setConfig('retryDelaySeconds', retryDelay);
+
+    // Update all bots
+    const bots = await storage.getAllBots();
+    for (const bot of bots) {
+      bot.config.retryDelaySeconds = retryDelay;
+      bot.lastUpdated = Date.now();
+      await storage.saveBot(bot);
+    }
+
+    console.log(chalk.green(`\n✓ Retry delay set to ${retryDelay} seconds`));
     console.log(chalk.dim('Applied to all bots immediately.\n'));
   }
 

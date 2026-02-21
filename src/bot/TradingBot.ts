@@ -54,6 +54,12 @@ export class TradingBot {
   // Chain
   private chain: Chain;
 
+  // Retry tracking
+  private lastFailedAttempt: Map<number, number> = new Map();
+  private buyingPositionIds: Set<number> = new Set();
+  private lastSellCheckLog: Map<number, number> = new Map();
+  private loggedFallbackGasThisTick: boolean = false;
+
   /**
    * Creates a new TradingBot instance
    * @constructor
@@ -212,8 +218,6 @@ export class TradingBot {
   /**
    * Check and execute buy opportunities
    */
-  private buyingPositionIds = new Set<number>();
-
   private async checkBuys(currentPrice: number): Promise<void> {
     // Check max active positions
     const activeCount = GridCalculator.countActivePositions(this.instance.positions);
@@ -228,6 +232,15 @@ export class TradingBot {
     );
 
     if (!position) return;
+
+    // Check retry delay for this position
+    const retryDelaySeconds = this.instance.config.retryDelaySeconds ?? 30;
+    const lastFailed = this.lastFailedAttempt.get(position.id) || 0;
+    const timeSinceFailure = (Date.now() - lastFailed) / 1000;
+    if (timeSinceFailure < retryDelaySeconds) {
+      console.log(`   Position ${position.id} failed ${timeSinceFailure.toFixed(0)}s ago, waiting ${retryDelaySeconds}s before retry...`);
+      return;
+    }
 
     // Guard against buying the same position twice
     if (this.buyingPositionIds.has(position.id)) {
@@ -312,6 +325,8 @@ export class TradingBot {
       });
     } else {
       console.error(`❌ Buy failed: ${result.error}`);
+      // Record failure for retry delay
+      this.lastFailedAttempt.set(position.id, Date.now());
     }
 
     // Save bot state (non-blocking with timeout)
@@ -323,9 +338,6 @@ export class TradingBot {
   /**
    * Check and execute sell opportunities
    */
-  private lastSellCheckLog: Map<number, number> = new Map();
-  private loggedFallbackGasThisTick: boolean = false;
-
   private async checkSells(currentPrice: number): Promise<void> {
     const positions = GridCalculator.findSellPositions(
       this.instance.positions,
@@ -527,11 +539,14 @@ export class TradingBot {
     try {
       const amountWei = parseEther(ethAmount);
       
-      console.log(`   Getting 0x quote for ${ethAmount} ETH...`);
+      // Get slippage from config (default 1% = 100 bps)
+      const slippageBps = this.instance.config.slippageBps ?? 100;
+      console.log(`   Getting 0x quote for ${ethAmount} ETH (${slippageBps/100}% slippage)...`);
       const quote = await this.zeroXApi.getBuyQuote(
         this.instance.tokenAddress,
         amountWei.toString(),
-        this.instance.walletAddress
+        this.instance.walletAddress,
+        slippageBps
       );
 
       if (!quote) {
@@ -619,7 +634,27 @@ export class TradingBot {
         };
       } else {
         this.consecutiveErrors++;
-        return { success: false, error: 'Transaction reverted' };
+        // Try to get more details about the revert
+        let revertReason = 'Transaction reverted';
+        try {
+          // Simulate the transaction to get revert reason
+          await this.publicClient.simulateContract({
+            address: quote.to as `0x${string}`,
+            abi: [], // We don't have the ABI, but viem might still give us the revert reason
+            functionName: 'execute',
+            args: [],
+          });
+        } catch (simError: any) {
+          if (simError.message?.includes('slippage') || simError.message?.includes('expired')) {
+            revertReason = 'Price moved (slippage exceeded)';
+          } else if (simError.message?.includes('insufficient')) {
+            revertReason = 'Insufficient funds or allowance';
+          } else if (simError.message) {
+            revertReason = `Transaction reverted: ${simError.message}`;
+          }
+        }
+        console.error(`   ❌ ${revertReason}`);
+        return { success: false, error: revertReason };
       }
     } catch (error: any) {
       this.consecutiveErrors++;
