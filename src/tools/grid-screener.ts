@@ -14,7 +14,7 @@
 import axios from 'axios';
 import chalk from 'chalk';
 
-const DEXSCREENER_API = 'https://api.dexscreener.com/latest';
+const DEXSCREENER_API_V1 = 'https://api.dexscreener.com';  // v1 endpoints at root
 
 interface TokenMetrics {
   address: string;
@@ -65,7 +65,7 @@ async function fetchTokenDataBatch(tokenAddresses: string[]): Promise<TokenMetri
   try {
     // Build comma-separated list of addresses (max 30)
     const addresses = tokenAddresses.slice(0, 30).join(',');
-    const url = `${DEXSCREENER_API}/tokens/v1/base/${addresses}`;
+    const url = `${DEXSCREENER_API_V1}/tokens/v1/base/${addresses}`;
     
     console.log(chalk.dim(`  Fetching: ${url.substring(0, 80)}...`));
     
@@ -142,7 +142,7 @@ async function fetchDiscoveryTokens(type: DiscoveryType): Promise<string[]> {
   }
 
   try {
-    const url = `${DEXSCREENER_API}${endpoints[type]}`;
+    const url = `${DEXSCREENER_API_V1}${endpoints[type]}`;
     console.log(chalk.dim(`  Fetching from ${type}...`));
     
     const response = await axios.get(url, { timeout: 10000 });
