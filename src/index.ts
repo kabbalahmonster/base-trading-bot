@@ -16,6 +16,7 @@ import { formatEther, createPublicClient } from 'viem';
 import { randomUUID } from 'crypto';
 import { PnLTracker, CsvExporter } from './analytics/index.js';
 import { BotDaemon } from './daemon/BotDaemon.js';
+import { runScreener } from './tools/grid-screener.js';
 import { writeFileSync } from 'fs';
 import dotenv from 'dotenv';
 
@@ -273,6 +274,7 @@ async function main() {
           { name: '📊 Diagnostic', value: 'diagnostic' },
           { name: '⚙️  System settings', value: 'system_settings' },
           { name: '🧮 View grid positions', value: 'view_grid' },
+          { name: '🎯 Token screener', value: 'screener' },
           { name: '🗑️  Delete bot', value: 'delete' },
           { name: '⏻️  Exit (bots keep running)', value: 'exit_keep' },
           { name: '⏹️  Exit and stop all bots', value: 'exit_stop' },
@@ -359,6 +361,9 @@ async function main() {
           break;
         case 'view_grid':
           await viewGridPositions(storage);
+          break;
+        case 'screener':
+          await runTokenScreener();
           break;
         case 'delete':
           await deleteBot(heartbeatManager, storage, walletManager);
@@ -4409,6 +4414,17 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
       console.log(chalk.yellow('\nNotifications not configured.'));
       console.log(chalk.dim('Use "🔔 Configure Telegram" from the main menu to set up.\n'));
     }
+  }
+}
+
+/**
+ * Run token screener for grid trading candidates
+ */
+async function runTokenScreener() {
+  try {
+    await runScreener();
+  } catch (error: any) {
+    console.error(chalk.red('Screener error:', error.message));
   }
 }
 
