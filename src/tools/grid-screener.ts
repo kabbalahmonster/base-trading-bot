@@ -123,21 +123,54 @@ type DiscoveryType =
   | 'trending'   // Most boosted tokens
   | 'latest'     // Latest token profiles
   | 'community'  // Community takeovers
-  | 'ads';       // Advertised tokens
+  | 'ads'        // Advertised tokens
+  | 'search';    // Search by query
+
+/**
+ * Search for tokens on Base using DexScreener search
+ */
+async function searchBaseTokens(query: string): Promise<string[]> {
+  try {
+    const url = `${DEXSCREENER_API_V1}/latest/dex/search?q=${encodeURIComponent(query)}`;
+    console.log(chalk.dim(`  Searching for "${query}"...`));
+    
+    const response = await axios.get(url, { timeout: 10000 });
+    
+    if (!response.data?.pairs || !Array.isArray(response.data.pairs)) {
+      console.log(chalk.dim(`  No search results found`));
+      return [];
+    }
+
+    // Extract Base chain token addresses from pairs
+    const baseTokens: string[] = response.data.pairs
+      .filter((p: any) => p.chainId === 'base')
+      .map((p: any) => p.baseToken?.address as string)
+      .filter((addr: string | undefined): addr is string => Boolean(addr));
+    
+    // Deduplicate
+    const uniqueTokens = [...new Set(baseTokens)];
+    console.log(chalk.dim(`  Found ${uniqueTokens.length} Base tokens from search`));
+    return uniqueTokens;
+  } catch (error: any) {
+    console.error(chalk.dim(`  Search error: ${error.message}`));
+    return [];
+  }
+}
 
 /**
  * Fetch tokens from various DexScreener discovery endpoints
  */
-async function fetchDiscoveryTokens(type: DiscoveryType): Promise<string[]> {
+async function fetchDiscoveryTokens(type: DiscoveryType, _searchQuery?: string): Promise<string[]> {
   const endpoints: Record<DiscoveryType, string> = {
     known: '', // Uses known list, not an API endpoint
     trending: '/token-boosts/top/v1',
     latest: '/token-profiles/latest/v1',
     community: '/community-takeovers/latest/v1',
     ads: '/ads/latest/v1',
+    search: '', // Handled separately
   };
 
-  if (type === 'known') {
+  if (type === 'known' || type === 'search') {
     return []; // Handled separately
   }
 
@@ -169,12 +202,13 @@ async function fetchDiscoveryTokens(type: DiscoveryType): Promise<string[]> {
 /**
  * Fetch top tokens on Base by volume
  */
-async function fetchBaseTokens(discoveryType: DiscoveryType = 'known'): Promise<TokenMetrics[]> {
+async function fetchBaseTokens(discoveryType: DiscoveryType = 'known', searchQuery?: string): Promise<TokenMetrics[]> {
   console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener API v1...\n'));
   console.log(chalk.dim('  Endpoint: /tokens/v1/base/{addresses}'));
   console.log(chalk.dim('  Rate limit: 300 req/min, 30 addresses per request\n'));
   
   let allAddresses: string[] = [];
+  let usedFallback = false;
   
   if (discoveryType === 'known') {
     // Get addresses from known tokens
@@ -189,15 +223,40 @@ async function fetchBaseTokens(discoveryType: DiscoveryType = 'known'): Promise<
     allAddresses = [...new Set([...knownAddresses, ...trendingAddresses])];
     
     console.log(chalk.dim(`  Checking ${knownAddresses.length} known + ${trendingAddresses.length} trending tokens...`));
+  } else if (discoveryType === 'search' && searchQuery) {
+    // Search for tokens
+    allAddresses = await searchBaseTokens(searchQuery);
+    
+    // If search returns nothing, fall back to known tokens
+    if (allAddresses.length === 0) {
+      console.log(chalk.yellow('  Search returned no results, falling back to known tokens...'));
+      allAddresses = KNOWN_BASE_TOKENS
+        .map(t => t.address)
+        .filter((a): a is string => !!a);
+      usedFallback = true;
+    }
   } else {
     // Fetch from specific discovery endpoint
     allAddresses = await fetchDiscoveryTokens(discoveryType);
     console.log(chalk.dim(`  Checking ${allAddresses.length} tokens from ${discoveryType}...`));
+    
+    // If discovery returns empty, fall back to known tokens
+    if (allAddresses.length === 0) {
+      console.log(chalk.yellow(`  No ${discoveryType} tokens found, falling back to known tokens...`));
+      allAddresses = KNOWN_BASE_TOKENS
+        .map(t => t.address)
+        .filter((a): a is string => !!a);
+      usedFallback = true;
+    }
   }
   
   if (allAddresses.length === 0) {
     console.log(chalk.yellow('\n  No token addresses to analyze'));
     return [];
+  }
+  
+  if (usedFallback) {
+    console.log(chalk.dim(`  Using ${allAddresses.length} known tokens as fallback...`));
   }
   
   console.log(chalk.dim(`  Total unique: ${allAddresses.length}\n`));
@@ -405,6 +464,7 @@ const DISCOVERY_OPTIONS: { value: DiscoveryType; label: string; description: str
   { value: 'latest', label: '✨ Latest Profiles', description: 'Newest token profiles listed' },
   { value: 'community', label: '🚀 Community Takeovers', description: 'Tokens with community takeovers' },
   { value: 'ads', label: '📢 Advertised', description: 'Tokens with paid advertisements' },
+  { value: 'search', label: '🔍 Search', description: 'Search for specific tokens by name/symbol' },
 ];
 
 /**
@@ -417,15 +477,19 @@ function getDiscoveryLabel(type: DiscoveryType): string {
 /**
  * Main screener function
  */
-async function runScreener(discoveryType: DiscoveryType = 'known') {
+async function runScreener(discoveryType: DiscoveryType = 'known', searchQuery?: string) {
   console.log(chalk.cyan('\n╔══════════════════════════════════════════════════════════════╗'));
   console.log(chalk.cyan('║     🎯 BASE GRID TRADING TOKEN SCREENER                      ║'));
   console.log(chalk.cyan('║     Find the best tokens for grid bot trading                ║'));
   console.log(chalk.cyan('╚══════════════════════════════════════════════════════════════╝\n'));
   
-  console.log(chalk.dim(`Source: ${getDiscoveryLabel(discoveryType)}\n`));
+  if (discoveryType === 'search' && searchQuery) {
+    console.log(chalk.dim(`Search: "${searchQuery}"\n`));
+  } else {
+    console.log(chalk.dim(`Source: ${getDiscoveryLabel(discoveryType)}\n`));
+  }
 
-  const tokens = await fetchBaseTokens(discoveryType);
+  const tokens = await fetchBaseTokens(discoveryType, searchQuery);
   
   if (tokens.length === 0) {
     console.log(chalk.red('No tokens found. Try again later.'));
@@ -446,7 +510,7 @@ async function runScreener(discoveryType: DiscoveryType = 'known') {
 }
 
 // Export discovery options for the menu
-export { DISCOVERY_OPTIONS, type DiscoveryType };
+export { DISCOVERY_OPTIONS, type DiscoveryType, searchBaseTokens };
 
 // Run if executed directly
 if (import.meta.url === `file://${process.argv[1]}`) {

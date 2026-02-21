@@ -4422,7 +4422,7 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
  */
 async function runTokenScreener() {
   console.log(chalk.cyan('\n🎯 Token Discovery Options\n'));
-  
+
   const { discoveryType } = await inquirer.prompt([
     {
       type: 'list',
@@ -4434,18 +4434,32 @@ async function runTokenScreener() {
         { name: '✨  Latest Profiles', value: 'latest' },
         { name: '🚀  Community Takeovers', value: 'community' },
         { name: '📢  Advertised', value: 'ads' },
+        { name: '🔍  Search (by name/symbol)', value: 'search' },
         { name: '⬅️  Back', value: 'back' },
       ],
     },
   ]);
-  
+
   if (discoveryType === 'back') {
     console.log(chalk.dim('\nCancelled.\n'));
     return;
   }
-  
+
+  let searchQuery: string | undefined;
+  if (discoveryType === 'search') {
+    const { query } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'query',
+        message: 'Enter token name or symbol to search:',
+        validate: (input: string) => input.length >= 2 || 'Enter at least 2 characters',
+      },
+    ]);
+    searchQuery = query;
+  }
+
   try {
-    await runScreener(discoveryType);
+    await runScreener(discoveryType, searchQuery);
   } catch (error: any) {
     console.error(chalk.red('Screener error:', error.message));
   }
