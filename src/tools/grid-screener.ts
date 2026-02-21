@@ -14,7 +14,7 @@
 import axios from 'axios';
 import chalk from 'chalk';
 
-const DEXSCREENER_API = 'https://api.dexscreener.com/latest/dex';
+const DEXSCREENER_API = 'https://api.dexscreener.com/latest';
 const BASE_CHAIN_ID = 'base';
 
 interface TokenMetrics {
@@ -50,8 +50,8 @@ async function fetchBaseTokens(): Promise<TokenMetrics[]> {
   console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener...\n'));
   
   try {
-    // Get top pairs on Base
-    const response = await axios.get(`${DEXSCREENER_API}/pairs/${BASE_CHAIN_ID}`, {
+    // Get top pairs on Base using the search endpoint
+    const response = await axios.get(`${DEXSCREENER_API}/dex/pairs/${BASE_CHAIN_ID}`, {
       timeout: 30000,
     });
 
