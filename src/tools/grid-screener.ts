@@ -57,50 +57,91 @@ const KNOWN_BASE_TOKENS: Partial<TokenMetrics>[] = [
 ];
 
 /**
- * Fetch token data from DexScreener for a specific token
+ * Fetch token data from DexScreener API v1
+ * Using: /tokens/v1/{chainId}/{tokenAddresses}
+ * Rate limit: 300 requests per minute, up to 30 addresses per request
  */
-async function fetchTokenData(tokenAddress: string): Promise<TokenMetrics | null> {
+async function fetchTokenDataBatch(tokenAddresses: string[]): Promise<TokenMetrics[]> {
   try {
-    const url = `${DEXSCREENER_API}/dex/tokens/${tokenAddress}`;
+    // Build comma-separated list of addresses (max 30)
+    const addresses = tokenAddresses.slice(0, 30).join(',');
+    const url = `${DEXSCREENER_API}/tokens/v1/base/${addresses}`;
+    
+    console.log(chalk.dim(`  Fetching: ${url.substring(0, 80)}...`));
+    
+    const response = await axios.get(url, { timeout: 30000 });
+    
+    if (!response.data || !Array.isArray(response.data)) {
+      console.log(chalk.yellow('  Unexpected response format'));
+      return [];
+    }
+
+    const tokens: TokenMetrics[] = [];
+    
+    for (const pair of response.data) {
+      // Skip if not on Base
+      if (pair.chainId !== 'base') continue;
+      
+      const baseToken = pair.baseToken;
+      
+      // Skip stablecoins
+      if (['USDC', 'USDT', 'DAI', 'USDbC'].includes(baseToken.symbol)) continue;
+      
+      // Skip if liquidity too low
+      if ((pair.liquidity?.usd || 0) < 10000) continue;
+
+      tokens.push({
+        address: baseToken.address,
+        symbol: baseToken.symbol,
+        name: baseToken.name,
+        price: parseFloat(pair.priceUsd) || 0,
+        priceChange24h: pair.priceChange?.h24 || 0,
+        volume24h: pair.volume?.h24 || 0,
+        liquidity: pair.liquidity?.usd || 0,
+        marketCap: pair.marketCap || 0,
+        ageDays: estimateAge(pair),
+        txCount24h: (pair.txns?.h24?.buys || 0) + (pair.txns?.h24?.sells || 0),
+        buySellRatio: (pair.txns?.h24?.buys || 1) / (pair.txns?.h24?.sells || 1),
+      });
+    }
+
+    return tokens;
+  } catch (error: any) {
+    console.error(chalk.red(`  API Error: ${error.message}`));
+    if (error.response?.status === 429) {
+      console.error(chalk.red('  Rate limited - too many requests'));
+    }
+    return [];
+  }
+}
+
+/**
+ * Fetch trending/boosted tokens from DexScreener
+ * Endpoint: /token-boosts/top/v1 or /token-profiles/latest/v1
+ */
+async function fetchTrendingTokens(): Promise<string[]> {
+  try {
+    // Try token boosts endpoint (most active/promoted tokens)
+    const url = `${DEXSCREENER_API}/token-boosts/top/v1`;
+    console.log(chalk.dim(`  Fetching trending tokens...`));
+    
     const response = await axios.get(url, { timeout: 10000 });
     
-    if (!response.data?.pairs || response.data.pairs.length === 0) {
-      return null;
+    if (!Array.isArray(response.data)) {
+      return [];
     }
 
-    // Get the pair with highest liquidity on Base
-    const basePairs = response.data.pairs.filter((p: any) => 
-      p.chainId === 'base' || p.chain === 'base'
-    );
+    // Extract Base chain token addresses
+    const baseTokens = response.data
+      .filter((t: any) => t.chainId === 'base')
+      .map((t: any) => t.tokenAddress)
+      .filter(Boolean);
     
-    if (basePairs.length === 0) return null;
-    
-    // Sort by liquidity
-    basePairs.sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
-    const bestPair = basePairs[0];
-
-    const baseToken = bestPair.baseToken;
-    
-    // Skip if this is a stablecoin pair
-    if (['USDC', 'USDT', 'DAI'].includes(baseToken.symbol)) {
-      return null;
-    }
-
-    return {
-      address: tokenAddress,
-      symbol: baseToken.symbol,
-      name: baseToken.name,
-      price: parseFloat(bestPair.priceUsd) || 0,
-      priceChange24h: bestPair.priceChange?.h24 || 0,
-      volume24h: bestPair.volume?.h24 || 0,
-      liquidity: bestPair.liquidity?.usd || 0,
-      marketCap: bestPair.marketCap || 0,
-      ageDays: estimateAge(bestPair),
-      txCount24h: (bestPair.txns?.h24?.buys || 0) + (bestPair.txns?.h24?.sells || 0),
-      buySellRatio: (bestPair.txns?.h24?.buys || 1) / (bestPair.txns?.h24?.sells || 1),
-    };
+    console.log(chalk.dim(`  Found ${baseTokens.length} trending Base tokens`));
+    return baseTokens;
   } catch (error: any) {
-    return null;
+    console.error(chalk.dim(`  Could not fetch trending tokens: ${error.message}`));
+    return [];
   }
 }
 
@@ -108,26 +149,34 @@ async function fetchTokenData(tokenAddress: string): Promise<TokenMetrics | null
  * Fetch top tokens on Base by volume
  */
 async function fetchBaseTokens(): Promise<TokenMetrics[]> {
-  console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener...\n'));
+  console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener API v1...\n'));
+  console.log(chalk.dim('  Endpoint: /tokens/v1/base/{addresses}'));
+  console.log(chalk.dim('  Rate limit: 300 req/min, 30 addresses per request\n'));
   
-  const tokens: TokenMetrics[] = [];
+  // Get addresses from known tokens
+  const knownAddresses = KNOWN_BASE_TOKENS
+    .map(t => t.address)
+    .filter((a): a is string => !!a);
   
-  // Try to fetch data for known tokens
-  console.log(chalk.dim(`  Checking ${KNOWN_BASE_TOKENS.length} known Base tokens...`));
+  // Also fetch trending tokens
+  const trendingAddresses = await fetchTrendingTokens();
   
-  for (const token of KNOWN_BASE_TOKENS) {
-    if (token.address) {
-      const data = await fetchTokenData(token.address);
-      if (data) {
-        tokens.push(data as TokenMetrics);
-        console.log(chalk.dim(`    ✓ ${data.symbol}: $${data.volume24h?.toLocaleString()} vol, ${data.priceChange24h?.toFixed(2)}%`));
-      }
-    }
-  }
+  // Combine and dedupe
+  const allAddresses = [...new Set([...knownAddresses, ...trendingAddresses])];
+  
+  console.log(chalk.dim(`  Checking ${knownAddresses.length} known + ${trendingAddresses.length} trending tokens...`));
+  console.log(chalk.dim(`  Total unique: ${allAddresses.length}\n`));
+  
+  const tokens = await fetchTokenDataBatch(allAddresses);
 
   if (tokens.length === 0) {
-    console.log(chalk.yellow('  No token data available from DexScreener'));
-    console.log(chalk.dim('  This may be due to API rate limiting or changes'));
+    console.log(chalk.yellow('\n  No token data available from DexScreener'));
+    console.log(chalk.dim('  This may be due to:'));
+    console.log(chalk.dim('  - API rate limiting (wait 60 seconds)'));
+    console.log(chalk.dim('  - Invalid token addresses'));
+    console.log(chalk.dim('  - API maintenance'));
+  } else {
+    console.log(chalk.green(`\n  ✓ Fetched data for ${tokens.length} tokens`));
   }
 
   return tokens;
