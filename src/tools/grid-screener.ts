@@ -50,19 +50,33 @@ async function fetchBaseTokens(): Promise<TokenMetrics[]> {
   console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener...\n'));
   
   try {
+    const url = `${DEXSCREENER_API}/token-profiles/${BASE_CHAIN_ID}`;
+    console.log(chalk.dim(`  Request URL: ${url}`));
+    
     // Get top tokens on Base using the token profiles endpoint
-    // This gets trending tokens with highest volume
-    const response = await axios.get(`${DEXSCREENER_API}/token-profiles/${BASE_CHAIN_ID}`, {
+    const response = await axios.get(url, {
       timeout: 30000,
     });
+
+    console.log(chalk.dim(`  Response status: ${response.status}`));
+    console.log(chalk.dim(`  Response type: ${typeof response.data}`));
+    console.log(chalk.dim(`  Response is array: ${Array.isArray(response.data)}`));
+    console.log(chalk.dim(`  Response keys: ${Object.keys(response.data || {}).join(', ')}`));
+    
+    // Debug: log first item if it's an array
+    if (Array.isArray(response.data) && response.data.length > 0) {
+      console.log(chalk.dim(`  First item keys: ${Object.keys(response.data[0]).join(', ')}`));
+    }
 
     // Handle different response formats from DexScreener
     let pairs: any[] = [];
     
     if (response.data?.pairs) {
       pairs = response.data.pairs;
+      console.log(chalk.dim(`  Using 'pairs' array from response`));
     } else if (Array.isArray(response.data)) {
       // Token profiles returns an array directly
+      console.log(chalk.dim(`  Mapping array of ${response.data.length} profiles`));
       pairs = response.data.map((profile: any) => ({
         baseToken: {
           address: profile.tokenAddress,
@@ -77,7 +91,8 @@ async function fetchBaseTokens(): Promise<TokenMetrics[]> {
         txns: { h24: { buys: 0, sells: 0 } },  // Not available in profiles
       }));
     } else {
-      console.log(chalk.yellow('No pairs found'));
+      console.log(chalk.yellow('No pairs found - unexpected response format'));
+      console.log(chalk.dim(`  Raw response preview: ${JSON.stringify(response.data).substring(0, 200)}...`));
       return [];
     }
 
@@ -115,7 +130,18 @@ async function fetchBaseTokens(): Promise<TokenMetrics[]> {
 
     return Array.from(tokenMap.values());
   } catch (error: any) {
-    console.error(chalk.red('Error fetching tokens:', error.message));
+    console.error(chalk.red('Error fetching tokens:'));
+    console.error(chalk.red(`  Message: ${error.message}`));
+    if (error.response) {
+      console.error(chalk.red(`  Status: ${error.response.status}`));
+      console.error(chalk.red(`  Status Text: ${error.response.statusText}`));
+      console.error(chalk.red(`  Data: ${JSON.stringify(error.response.data).substring(0, 300)}...`));
+      console.error(chalk.red(`  Headers: ${JSON.stringify(error.response.headers)}`));
+    } else if (error.request) {
+      console.error(chalk.red('  No response received - request was made but no reply'));
+    } else {
+      console.error(chalk.red(`  Error setting up request: ${error.message}`));
+    }
     return [];
   }
 }
