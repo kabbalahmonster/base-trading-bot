@@ -4421,8 +4421,31 @@ async function systemSettings(storage: JsonStorage, heartbeatManager: HeartbeatM
  * Run token screener for grid trading candidates
  */
 async function runTokenScreener() {
+  console.log(chalk.cyan('\n🎯 Token Discovery Options\n'));
+  
+  const { discoveryType } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'discoveryType',
+      message: 'Choose token discovery source:',
+      choices: [
+        { name: '📋  Known + Trending (Recommended)', value: 'known' },
+        { name: '🔥  Trending (Top Boosted)', value: 'trending' },
+        { name: '✨  Latest Profiles', value: 'latest' },
+        { name: '🚀  Community Takeovers', value: 'community' },
+        { name: '📢  Advertised', value: 'ads' },
+        { name: '⬅️  Back', value: 'back' },
+      ],
+    },
+  ]);
+  
+  if (discoveryType === 'back') {
+    console.log(chalk.dim('\nCancelled.\n'));
+    return;
+  }
+  
   try {
-    await runScreener();
+    await runScreener(discoveryType);
   } catch (error: any) {
     console.error(chalk.red('Screener error:', error.message));
   }

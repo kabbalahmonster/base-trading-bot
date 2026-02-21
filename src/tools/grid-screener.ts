@@ -116,18 +116,39 @@ async function fetchTokenDataBatch(tokenAddresses: string[]): Promise<TokenMetri
 }
 
 /**
- * Fetch trending/boosted tokens from DexScreener
- * Endpoint: /token-boosts/top/v1 or /token-profiles/latest/v1
+ * Discovery list types from DexScreener
  */
-async function fetchTrendingTokens(): Promise<string[]> {
+type DiscoveryType = 
+  | 'known'      // Known established tokens
+  | 'trending'   // Most boosted tokens
+  | 'latest'     // Latest token profiles
+  | 'community'  // Community takeovers
+  | 'ads';       // Advertised tokens
+
+/**
+ * Fetch tokens from various DexScreener discovery endpoints
+ */
+async function fetchDiscoveryTokens(type: DiscoveryType): Promise<string[]> {
+  const endpoints: Record<DiscoveryType, string> = {
+    known: '', // Uses known list, not an API endpoint
+    trending: '/token-boosts/top/v1',
+    latest: '/token-profiles/latest/v1',
+    community: '/community-takeovers/latest/v1',
+    ads: '/ads/latest/v1',
+  };
+
+  if (type === 'known') {
+    return []; // Handled separately
+  }
+
   try {
-    // Try token boosts endpoint (most active/promoted tokens)
-    const url = `${DEXSCREENER_API}/token-boosts/top/v1`;
-    console.log(chalk.dim(`  Fetching trending tokens...`));
+    const url = `${DEXSCREENER_API}${endpoints[type]}`;
+    console.log(chalk.dim(`  Fetching from ${type}...`));
     
     const response = await axios.get(url, { timeout: 10000 });
     
     if (!Array.isArray(response.data)) {
+      console.log(chalk.dim(`  No ${type} tokens found`));
       return [];
     }
 
@@ -137,10 +158,10 @@ async function fetchTrendingTokens(): Promise<string[]> {
       .map((t: any) => t.tokenAddress)
       .filter(Boolean);
     
-    console.log(chalk.dim(`  Found ${baseTokens.length} trending Base tokens`));
+    console.log(chalk.dim(`  Found ${baseTokens.length} ${type} Base tokens`));
     return baseTokens;
   } catch (error: any) {
-    console.error(chalk.dim(`  Could not fetch trending tokens: ${error.message}`));
+    console.error(chalk.dim(`  Could not fetch ${type} tokens: ${error.message}`));
     return [];
   }
 }
@@ -148,23 +169,37 @@ async function fetchTrendingTokens(): Promise<string[]> {
 /**
  * Fetch top tokens on Base by volume
  */
-async function fetchBaseTokens(): Promise<TokenMetrics[]> {
+async function fetchBaseTokens(discoveryType: DiscoveryType = 'known'): Promise<TokenMetrics[]> {
   console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener API v1...\n'));
   console.log(chalk.dim('  Endpoint: /tokens/v1/base/{addresses}'));
   console.log(chalk.dim('  Rate limit: 300 req/min, 30 addresses per request\n'));
   
-  // Get addresses from known tokens
-  const knownAddresses = KNOWN_BASE_TOKENS
-    .map(t => t.address)
-    .filter((a): a is string => !!a);
+  let allAddresses: string[] = [];
   
-  // Also fetch trending tokens
-  const trendingAddresses = await fetchTrendingTokens();
+  if (discoveryType === 'known') {
+    // Get addresses from known tokens
+    const knownAddresses = KNOWN_BASE_TOKENS
+      .map(t => t.address)
+      .filter((a): a is string => !!a);
+    
+    // Also fetch trending tokens
+    const trendingAddresses = await fetchDiscoveryTokens('trending');
+    
+    // Combine and dedupe
+    allAddresses = [...new Set([...knownAddresses, ...trendingAddresses])];
+    
+    console.log(chalk.dim(`  Checking ${knownAddresses.length} known + ${trendingAddresses.length} trending tokens...`));
+  } else {
+    // Fetch from specific discovery endpoint
+    allAddresses = await fetchDiscoveryTokens(discoveryType);
+    console.log(chalk.dim(`  Checking ${allAddresses.length} tokens from ${discoveryType}...`));
+  }
   
-  // Combine and dedupe
-  const allAddresses = [...new Set([...knownAddresses, ...trendingAddresses])];
+  if (allAddresses.length === 0) {
+    console.log(chalk.yellow('\n  No token addresses to analyze'));
+    return [];
+  }
   
-  console.log(chalk.dim(`  Checking ${knownAddresses.length} known + ${trendingAddresses.length} trending tokens...`));
   console.log(chalk.dim(`  Total unique: ${allAddresses.length}\n`));
   
   const tokens = await fetchTokenDataBatch(allAddresses);
@@ -362,15 +397,35 @@ function displayResults(scores: GridScore[]) {
 }
 
 /**
+ * Discovery list options
+ */
+const DISCOVERY_OPTIONS: { value: DiscoveryType; label: string; description: string }[] = [
+  { value: 'known', label: '📋 Known + Trending', description: 'Established tokens + most boosted' },
+  { value: 'trending', label: '🔥 Trending (Top Boosted)', description: 'Most actively boosted tokens' },
+  { value: 'latest', label: '✨ Latest Profiles', description: 'Newest token profiles listed' },
+  { value: 'community', label: '🚀 Community Takeovers', description: 'Tokens with community takeovers' },
+  { value: 'ads', label: '📢 Advertised', description: 'Tokens with paid advertisements' },
+];
+
+/**
+ * Get discovery type label
+ */
+function getDiscoveryLabel(type: DiscoveryType): string {
+  return DISCOVERY_OPTIONS.find(o => o.value === type)?.label || type;
+}
+
+/**
  * Main screener function
  */
-async function runScreener() {
+async function runScreener(discoveryType: DiscoveryType = 'known') {
   console.log(chalk.cyan('\n╔══════════════════════════════════════════════════════════════╗'));
   console.log(chalk.cyan('║     🎯 BASE GRID TRADING TOKEN SCREENER                      ║'));
   console.log(chalk.cyan('║     Find the best tokens for grid bot trading                ║'));
   console.log(chalk.cyan('╚══════════════════════════════════════════════════════════════╝\n'));
+  
+  console.log(chalk.dim(`Source: ${getDiscoveryLabel(discoveryType)}\n`));
 
-  const tokens = await fetchBaseTokens();
+  const tokens = await fetchBaseTokens(discoveryType);
   
   if (tokens.length === 0) {
     console.log(chalk.red('No tokens found. Try again later.'));
@@ -389,6 +444,9 @@ async function runScreener() {
   console.log('4. Set grid ranges based on 7-day volatility');
   console.log();
 }
+
+// Export discovery options for the menu
+export { DISCOVERY_OPTIONS, type DiscoveryType };
 
 // Run if executed directly
 if (import.meta.url === `file://${process.argv[1]}`) {
