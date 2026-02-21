@@ -15,7 +15,6 @@ import axios from 'axios';
 import chalk from 'chalk';
 
 const DEXSCREENER_API = 'https://api.dexscreener.com/latest';
-const BASE_CHAIN_ID = 'base';
 
 interface TokenMetrics {
   address: string;
@@ -44,106 +43,94 @@ interface GridScore {
 }
 
 /**
+ * Known Base tokens for grid trading (fallback when APIs fail)
+ */
+const KNOWN_BASE_TOKENS: Partial<TokenMetrics>[] = [
+  { address: '0x940181a94A35A4569E4529A3CDfB74e38FD98631', symbol: 'AERO', name: 'Aerodrome' },
+  { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH', name: 'Wrapped Ether' },
+  { address: '0x22aF33FE49fD1Fa80c7149773dDe5890D3c76F3b', symbol: 'BNKR', name: 'Bankr Coin' },
+  { address: '0x532f27101965dd16442E59d40670FaF5eBB142E4', symbol: 'BRETT', name: 'Brett' },
+  { address: '0x98f47e10d7fB1165c0951441ac255471f07AA5f1', symbol: 'TOSHI', name: 'Toshi' },
+  { address: '0x5ab3d4c385b400f3abb49e80de2faf6a88a7b691', symbol: 'FLOCK', name: 'FLock.io' },
+  { address: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed', symbol: 'DEGEN', name: 'Degen' },
+  { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', symbol: 'USDC', name: 'USD Coin' },
+];
+
+/**
+ * Fetch token data from DexScreener for a specific token
+ */
+async function fetchTokenData(tokenAddress: string): Promise<TokenMetrics | null> {
+  try {
+    const url = `${DEXSCREENER_API}/dex/tokens/${tokenAddress}`;
+    const response = await axios.get(url, { timeout: 10000 });
+    
+    if (!response.data?.pairs || response.data.pairs.length === 0) {
+      return null;
+    }
+
+    // Get the pair with highest liquidity on Base
+    const basePairs = response.data.pairs.filter((p: any) => 
+      p.chainId === 'base' || p.chain === 'base'
+    );
+    
+    if (basePairs.length === 0) return null;
+    
+    // Sort by liquidity
+    basePairs.sort((a: any, b: any) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+    const bestPair = basePairs[0];
+
+    const baseToken = bestPair.baseToken;
+    
+    // Skip if this is a stablecoin pair
+    if (['USDC', 'USDT', 'DAI'].includes(baseToken.symbol)) {
+      return null;
+    }
+
+    return {
+      address: tokenAddress,
+      symbol: baseToken.symbol,
+      name: baseToken.name,
+      price: parseFloat(bestPair.priceUsd) || 0,
+      priceChange24h: bestPair.priceChange?.h24 || 0,
+      volume24h: bestPair.volume?.h24 || 0,
+      liquidity: bestPair.liquidity?.usd || 0,
+      marketCap: bestPair.marketCap || 0,
+      ageDays: estimateAge(bestPair),
+      txCount24h: (bestPair.txns?.h24?.buys || 0) + (bestPair.txns?.h24?.sells || 0),
+      buySellRatio: (bestPair.txns?.h24?.buys || 1) / (bestPair.txns?.h24?.sells || 1),
+    };
+  } catch (error: any) {
+    return null;
+  }
+}
+
+/**
  * Fetch top tokens on Base by volume
  */
 async function fetchBaseTokens(): Promise<TokenMetrics[]> {
   console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener...\n'));
   
-  try {
-    const url = `${DEXSCREENER_API}/token-profiles/${BASE_CHAIN_ID}`;
-    console.log(chalk.dim(`  Request URL: ${url}`));
-    
-    // Get top tokens on Base using the token profiles endpoint
-    const response = await axios.get(url, {
-      timeout: 30000,
-    });
-
-    console.log(chalk.dim(`  Response status: ${response.status}`));
-    console.log(chalk.dim(`  Response type: ${typeof response.data}`));
-    console.log(chalk.dim(`  Response is array: ${Array.isArray(response.data)}`));
-    console.log(chalk.dim(`  Response keys: ${Object.keys(response.data || {}).join(', ')}`));
-    
-    // Debug: log first item if it's an array
-    if (Array.isArray(response.data) && response.data.length > 0) {
-      console.log(chalk.dim(`  First item keys: ${Object.keys(response.data[0]).join(', ')}`));
-    }
-
-    // Handle different response formats from DexScreener
-    let pairs: any[] = [];
-    
-    if (response.data?.pairs) {
-      pairs = response.data.pairs;
-      console.log(chalk.dim(`  Using 'pairs' array from response`));
-    } else if (Array.isArray(response.data)) {
-      // Token profiles returns an array directly
-      console.log(chalk.dim(`  Mapping array of ${response.data.length} profiles`));
-      pairs = response.data.map((profile: any) => ({
-        baseToken: {
-          address: profile.tokenAddress,
-          symbol: profile.symbol,
-          name: profile.name,
-        },
-        priceUsd: profile.priceUsd,
-        priceChange: { h24: profile.priceChange24h },
-        volume: { h24: profile.volume24h },
-        liquidity: { usd: profile.liquidityUsd },
-        marketCap: profile.marketCap,
-        txns: { h24: { buys: 0, sells: 0 } },  // Not available in profiles
-      }));
-    } else {
-      console.log(chalk.yellow('No pairs found - unexpected response format'));
-      console.log(chalk.dim(`  Raw response preview: ${JSON.stringify(response.data).substring(0, 200)}...`));
-      return [];
-    }
-
-    console.log(chalk.dim(`  Found ${pairs.length} pairs`));
-
-    // Extract unique tokens (filter out stablecoins)
-    const tokenMap = new Map<string, TokenMetrics>();
-    const stables = ['USDC', 'USDT', 'DAI', 'USDz', 'AUSD'];
-
-    for (const pair of pairs) {
-      // Skip if liquidity too low
-      if (pair.liquidity?.usd < 10000) continue;
-
-      // Process base token (non-stable)
-      const baseToken = pair.baseToken;
-
-      if (!stables.includes(baseToken.symbol) && !baseToken.symbol.includes('USD')) {
-        if (!tokenMap.has(baseToken.address)) {
-          tokenMap.set(baseToken.address, {
-            address: baseToken.address,
-            symbol: baseToken.symbol,
-            name: baseToken.name,
-            price: parseFloat(pair.priceUsd) || 0,
-            priceChange24h: pair.priceChange?.h24 || 0,
-            volume24h: pair.volume?.h24 || 0,
-            liquidity: pair.liquidity?.usd || 0,
-            marketCap: pair.marketCap || 0,
-            ageDays: estimateAge(pair),
-            txCount24h: pair.txns?.h24?.buys + pair.txns?.h24?.sells || 0,
-            buySellRatio: pair.txns?.h24?.buys / (pair.txns?.h24?.sells || 1) || 1,
-          });
-        }
+  const tokens: TokenMetrics[] = [];
+  
+  // Try to fetch data for known tokens
+  console.log(chalk.dim(`  Checking ${KNOWN_BASE_TOKENS.length} known Base tokens...`));
+  
+  for (const token of KNOWN_BASE_TOKENS) {
+    if (token.address) {
+      const data = await fetchTokenData(token.address);
+      if (data) {
+        tokens.push(data as TokenMetrics);
+        console.log(chalk.dim(`    ✓ ${data.symbol}: $${data.volume24h?.toLocaleString()} vol, ${data.priceChange24h?.toFixed(2)}%`));
       }
     }
-
-    return Array.from(tokenMap.values());
-  } catch (error: any) {
-    console.error(chalk.red('Error fetching tokens:'));
-    console.error(chalk.red(`  Message: ${error.message}`));
-    if (error.response) {
-      console.error(chalk.red(`  Status: ${error.response.status}`));
-      console.error(chalk.red(`  Status Text: ${error.response.statusText}`));
-      console.error(chalk.red(`  Data: ${JSON.stringify(error.response.data).substring(0, 300)}...`));
-      console.error(chalk.red(`  Headers: ${JSON.stringify(error.response.headers)}`));
-    } else if (error.request) {
-      console.error(chalk.red('  No response received - request was made but no reply'));
-    } else {
-      console.error(chalk.red(`  Error setting up request: ${error.message}`));
-    }
-    return [];
   }
+
+  if (tokens.length === 0) {
+    console.log(chalk.yellow('  No token data available from DexScreener'));
+    console.log(chalk.dim('  This may be due to API rate limiting or changes'));
+  }
+
+  return tokens;
 }
 
 /**
