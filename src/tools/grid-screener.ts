@@ -50,17 +50,37 @@ async function fetchBaseTokens(): Promise<TokenMetrics[]> {
   console.log(chalk.cyan('🔍 Fetching Base tokens from DexScreener...\n'));
   
   try {
-    // Get top pairs on Base using the search endpoint
-    const response = await axios.get(`${DEXSCREENER_API}/dex/pairs/${BASE_CHAIN_ID}`, {
+    // Get top tokens on Base using the token profiles endpoint
+    // This gets trending tokens with highest volume
+    const response = await axios.get(`${DEXSCREENER_API}/token-profiles/${BASE_CHAIN_ID}`, {
       timeout: 30000,
     });
 
-    if (!response.data?.pairs) {
+    // Handle different response formats from DexScreener
+    let pairs: any[] = [];
+    
+    if (response.data?.pairs) {
+      pairs = response.data.pairs;
+    } else if (Array.isArray(response.data)) {
+      // Token profiles returns an array directly
+      pairs = response.data.map((profile: any) => ({
+        baseToken: {
+          address: profile.tokenAddress,
+          symbol: profile.symbol,
+          name: profile.name,
+        },
+        priceUsd: profile.priceUsd,
+        priceChange: { h24: profile.priceChange24h },
+        volume: { h24: profile.volume24h },
+        liquidity: { usd: profile.liquidityUsd },
+        marketCap: profile.marketCap,
+        txns: { h24: { buys: 0, sells: 0 } },  // Not available in profiles
+      }));
+    } else {
       console.log(chalk.yellow('No pairs found'));
       return [];
     }
 
-    const pairs = response.data.pairs;
     console.log(chalk.dim(`  Found ${pairs.length} pairs`));
 
     // Extract unique tokens (filter out stablecoins)
