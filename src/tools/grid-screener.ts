@@ -177,11 +177,36 @@ async function fetchDiscoveryTokens(type: DiscoveryType, _searchQuery?: string):
   try {
     const url = `${DEXSCREENER_API_V1}${endpoints[type]}`;
     console.log(chalk.dim(`  Fetching from ${type}...`));
+    console.log(chalk.dim(`  URL: ${url}`));
     
     const response = await axios.get(url, { timeout: 10000 });
     
+    // Debug: log response structure
+    console.log(chalk.dim(`  Response type: ${typeof response.data}`));
+    console.log(chalk.dim(`  Is array: ${Array.isArray(response.data)}`));
+    
+    if (Array.isArray(response.data)) {
+      console.log(chalk.dim(`  Array length: ${response.data.length}`));
+      if (response.data.length > 0) {
+        const sample = response.data[0];
+        console.log(chalk.dim(`  First item keys: ${Object.keys(sample).join(', ')}`));
+        console.log(chalk.dim(`  First item chainId: ${sample.chainId}`));
+        console.log(chalk.dim(`  First item tokenAddress: ${sample.tokenAddress?.substring(0, 20)}...`));
+        
+        // Show all chainIds found
+        const chainIds = [...new Set(response.data.map((t: any) => t.chainId))];
+        console.log(chalk.dim(`  All chainIds found: ${chainIds.join(', ')}`));
+        
+        // Count Base tokens
+        const baseCount = response.data.filter((t: any) => t.chainId === 'base').length;
+        console.log(chalk.dim(`  Base tokens in response: ${baseCount}`));
+      }
+    } else {
+      console.log(chalk.dim(`  Response preview: ${JSON.stringify(response.data).substring(0, 200)}`));
+    }
+    
     if (!Array.isArray(response.data)) {
-      console.log(chalk.dim(`  No ${type} tokens found`));
+      console.log(chalk.dim(`  No ${type} tokens found - response is not array`));
       return [];
     }
 
