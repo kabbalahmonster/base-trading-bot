@@ -634,27 +634,8 @@ export class TradingBot {
         };
       } else {
         this.consecutiveErrors++;
-        // Try to get more details about the revert
-        let revertReason = 'Transaction reverted';
-        try {
-          // Simulate the transaction to get revert reason
-          await this.publicClient.simulateContract({
-            address: quote.to as `0x${string}`,
-            abi: [], // We don't have the ABI, but viem might still give us the revert reason
-            functionName: 'execute',
-            args: [],
-          });
-        } catch (simError: any) {
-          if (simError.message?.includes('slippage') || simError.message?.includes('expired')) {
-            revertReason = 'Price moved (slippage exceeded)';
-          } else if (simError.message?.includes('insufficient')) {
-            revertReason = 'Insufficient funds or allowance';
-          } else if (simError.message) {
-            revertReason = `Transaction reverted: ${simError.message}`;
-          }
-        }
-        console.error(`   ❌ ${revertReason}`);
-        return { success: false, error: revertReason };
+        console.error(`   ❌ Transaction reverted on-chain`);
+        return { success: false, error: 'Transaction reverted - likely price moved or insufficient funds' };
       }
     } catch (error: any) {
       this.consecutiveErrors++;
