@@ -244,7 +244,7 @@ export class TradingBot {
 
     // Guard against buying the same position twice
     if (this.buyingPositionIds.has(position.id)) {
-      console.log(`   Position ${position.id} is already being bought, skipping...`);
+      console.log(`   Position ${position.id} is already being bought by this bot, skipping...`);
       return;
     }
 
@@ -271,6 +271,8 @@ export class TradingBot {
     }
 
     console.log(`\n🎯 Buy opportunity found: Position ${position.id} at ${GridCalculator.formatPrice(position.buyPrice)} ETH`);
+    console.log(chalk.dim(`   Bot: ${this.instance.name} (${this.instance.tokenSymbol})`));
+    console.log(chalk.dim(`   Wallet: ${this.instance.walletAddress.slice(0, 12)}...`));
 
     // Calculate buy amount
     let buyAmountEth: number;
@@ -653,12 +655,25 @@ export class TradingBot {
       } else {
         this.consecutiveErrors++;
         console.error(`   ❌ Transaction reverted on-chain`);
+        console.error(chalk.dim(`   Tx: ${txHash}`));
+        console.error(chalk.dim(`   Gas used: ${receipt.gasUsed} (of ${quote.gas} limit)`));
+        console.error(chalk.dim(`   Effective gas price: ${formatEther(receipt.effectiveGasPrice || BigInt(quote.gasPrice))} ETH`));
+        
+        // Try to decode revert reason
+        try {
+          const txReceipt = await this.publicClient.getTransactionReceipt({ hash: txHash });
+          if (txReceipt.logs.length === 0 && receipt.gasUsed >= BigInt(quote.gas) * 90n / 100n) {
+            console.error(chalk.yellow(`   ⚠️  Gas limit hit - transaction ran out of gas`));
+            console.error(chalk.yellow(`   Try increasing gas limit in settings`));
+          }
+        } catch (e) {}
+        
         console.error(chalk.dim(`   Possible causes:`));
         console.error(chalk.dim(`   1. Price moved beyond slippage tolerance (increase slippage in settings)`));
-        console.error(chalk.dim(`   2. Insufficient ETH for gas (need ${formatEther(gasCostWei)} ETH)`));
-        console.error(chalk.dim(`   3. Token contract blocked the transaction (anti-bot protection)`));
-        console.error(chalk.dim(`   4. Position already filled by another bot/user`));
-        return { success: false, error: `Transaction reverted. Gas cost: ${formatEther(gasCostWei)} ETH. Try: 1) Increase slippage 2) Check wallet balance 3) Wait and retry` };
+        console.error(chalk.dim(`   2. Token contract blocked the transaction (anti-bot protection)`));
+        console.error(chalk.dim(`   3. Position already filled by another bot/user`));
+        console.error(chalk.dim(`   4. Gas limit too low for this token`));
+        return { success: false, error: `Transaction reverted. Tx: ${txHash.slice(0, 20)}... Try: 1) Increase slippage to 3-5% 2) Check token contract 3) Wait and retry` };
       }
     } catch (error: any) {
       this.consecutiveErrors++;
