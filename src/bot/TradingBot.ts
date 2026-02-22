@@ -568,6 +568,24 @@ export class TradingBot {
       // Debug: log quote info
       console.log(`   Expected tokens: ${formatEther(BigInt(quote.buyAmount))}`);
       console.log(chalk.dim(`   TX to: ${quote.to?.slice(0, 20)}..., gas: ${quote.gas}`));
+      
+      // Check wallet balance before sending
+      const walletBalance = await this.publicClient.getBalance({ 
+        address: this.instance.walletAddress as `0x${string}` 
+      });
+      const gasCostWei = BigInt(quote.gas) * BigInt(quote.gasPrice);
+      const totalRequired = amountWei + gasCostWei;
+      
+      console.log(chalk.dim(`   💰 Wallet balance: ${formatEther(walletBalance)} ETH`));
+      console.log(chalk.dim(`   ⛽ Gas cost: ${formatEther(gasCostWei)} ETH (${quote.gas} gas × ${formatEther(BigInt(quote.gasPrice))} gwei)`));
+      console.log(chalk.dim(`   💸 Total required: ${formatEther(totalRequired)} ETH (buy + gas)`));
+      console.log(chalk.dim(`   ✅ Sufficient funds: ${walletBalance >= totalRequired ? 'YES' : 'NO - need ' + formatEther(totalRequired - walletBalance) + ' more ETH'}`));
+      
+      // Warn if gas exceeds buy amount
+      if (gasCostWei > amountWei) {
+        console.log(chalk.yellow(`   ⚠️  WARNING: Gas cost (${formatEther(gasCostWei)} ETH) exceeds buy amount (${ethAmount} ETH)!`));
+        console.log(chalk.yellow(`   This trade will likely lose money to gas fees.`));
+      }
 
       // Dry-run: simulate without sending
       if (this.dryRun) {
@@ -635,7 +653,12 @@ export class TradingBot {
       } else {
         this.consecutiveErrors++;
         console.error(`   ❌ Transaction reverted on-chain`);
-        return { success: false, error: 'Transaction reverted - likely price moved or insufficient funds' };
+        console.error(chalk.dim(`   Possible causes:`));
+        console.error(chalk.dim(`   1. Price moved beyond slippage tolerance (increase slippage in settings)`));
+        console.error(chalk.dim(`   2. Insufficient ETH for gas (need ${formatEther(gasCostWei)} ETH)`));
+        console.error(chalk.dim(`   3. Token contract blocked the transaction (anti-bot protection)`));
+        console.error(chalk.dim(`   4. Position already filled by another bot/user`));
+        return { success: false, error: `Transaction reverted. Gas cost: ${formatEther(gasCostWei)} ETH. Try: 1) Increase slippage 2) Check wallet balance 3) Wait and retry` };
       }
     } catch (error: any) {
       this.consecutiveErrors++;
