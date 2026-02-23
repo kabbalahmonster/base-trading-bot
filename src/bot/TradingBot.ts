@@ -603,12 +603,17 @@ export class TradingBot {
 
       console.log(`   Executing transaction...`);
 
+      // Apply gas buffer (20% extra) for tokens with anti-bot protection
+      const gasBuffer = 120n; // 120% = 20% buffer
+      const gasLimit = (BigInt(quote.gas) * gasBuffer) / 100n;
+      console.log(chalk.dim(`   Gas limit: ${quote.gas} + 20% buffer = ${gasLimit}`));
+
       // Send transaction
       const txHash = await (this.walletClient as any).sendTransaction({
         to: quote.to as `0x${string}`,
         data: quote.data as `0x${string}`,
         value: BigInt(quote.value),
-        gas: BigInt(quote.gas),
+        gas: gasLimit,
         gasPrice: BigInt(quote.gasPrice),
       });
 
@@ -764,12 +769,17 @@ export class TradingBot {
 
       // Handle missing gas estimates - use defaults for Base
       // Gas limit 3M units, gas price 0.01 Gwei for ~0.00003 ETH total
-      const gasLimit = quote.gas ? BigInt(quote.gas) : BigInt(3000000);
+      // Apply 20% gas buffer for anti-bot protection
+      const gasBuffer = 120n;
+      const baseGasLimit = quote.gas ? BigInt(quote.gas) : BigInt(3000000);
+      const gasLimit = (baseGasLimit * gasBuffer) / 100n;
       const gasPrice = quote.gasPrice ? BigInt(quote.gasPrice) : BigInt(10000000); // 0.01 Gwei
 
       if (!quote.gas || !quote.gasPrice) {
         const estimatedCost = formatEther(gasLimit * gasPrice);
         console.log(chalk.yellow(`   ⚠ Using estimated gas: ${gasLimit} units @ 0.01 Gwei = ${estimatedCost} ETH`));
+      } else {
+        console.log(chalk.dim(`   Sell gas limit: ${baseGasLimit} + 20% buffer = ${gasLimit}`));
       }
 
       console.log(`   Executing sell transaction...`);
