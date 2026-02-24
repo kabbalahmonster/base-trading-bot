@@ -22,6 +22,7 @@ const DEFAULT_TRADE_DATA: TradeStorageData = {
 export class JsonStorage {
   private db: Low<BotStorage>;
   private tradeDb: Low<TradeStorageData>;
+  private writeLock: Promise<void> = Promise.resolve();
 
   constructor(filePath: string = './bots.json', tradeFilePath?: string) {
     const adapter = new JSONFile<BotStorage>(filePath);
@@ -31,6 +32,24 @@ export class JsonStorage {
     const actualTradeFilePath = tradeFilePath ?? filePath;
     const tradeAdapter = new JSONFile<TradeStorageData>(actualTradeFilePath);
     this.tradeDb = new Low(tradeAdapter, DEFAULT_TRADE_DATA);
+  }
+
+  // Queue write operations to prevent race conditions
+  private async queueWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const previousLock = this.writeLock;
+    let releaseLock: () => void;
+    
+    this.writeLock = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    
+    await previousLock;
+    
+    try {
+      return await operation();
+    } finally {
+      releaseLock!();
+    }
   }
 
   async init(): Promise<void> {
@@ -151,22 +170,26 @@ export class JsonStorage {
   }
 
   async saveBot(bot: BotInstance): Promise<void> {
-    if (!this.db.data) await this.init();
-    
-    const index = this.db.data!.bots.findIndex(b => b.id === bot.id);
-    if (index >= 0) {
-      this.db.data!.bots[index] = bot;
-    } else {
-      this.db.data!.bots.push(bot);
-    }
-    
-    await this.db.write();
+    return this.queueWrite(async () => {
+      if (!this.db.data) await this.init();
+      
+      const index = this.db.data!.bots.findIndex(b => b.id === bot.id);
+      if (index >= 0) {
+        this.db.data!.bots[index] = bot;
+      } else {
+        this.db.data!.bots.push(bot);
+      }
+      
+      await this.db.write();
+    });
   }
 
   async deleteBot(id: string): Promise<void> {
-    if (!this.db.data) await this.init();
-    this.db.data!.bots = this.db.data!.bots.filter(b => b.id !== id);
-    await this.db.write();
+    return this.queueWrite(async () => {
+      if (!this.db.data) await this.init();
+      this.db.data!.bots = this.db.data!.bots.filter(b => b.id !== id);
+      await this.db.write();
+    });
   }
 
   async updateBotField(
@@ -245,12 +268,14 @@ export class JsonStorage {
   }
 
   async saveTrade(record: TradeRecord): Promise<void> {
-    await this.tradeDb.read();
-    if (!this.tradeDb.data) {
-      this.tradeDb.data = DEFAULT_TRADE_DATA;
-    }
-    this.tradeDb.data.trades.push(record);
-    await this.tradeDb.write();
+    return this.queueWrite(async () => {
+      await this.tradeDb.read();
+      if (!this.tradeDb.data) {
+        this.tradeDb.data = DEFAULT_TRADE_DATA;
+      }
+      this.tradeDb.data.trades.push(record);
+      await this.tradeDb.write();
+    });
   }
 
   async clearTradeHistory(): Promise<void> {
@@ -269,9 +294,11 @@ export class JsonStorage {
   }
 
   async saveCircuitBreaker(state: CircuitBreakerState): Promise<void> {
-    if (!this.db.data) await this.init();
-    this.db.data!.circuitBreaker = state;
-    await this.db.write();
+    return this.queueWrite(async () => {
+      if (!this.db.data) await this.init();
+      this.db.data!.circuitBreaker = state;
+      await this.db.write();
+    });
   }
 
   // Trailing Stop Loss Methods
@@ -281,9 +308,11 @@ export class JsonStorage {
   }
 
   async saveTrailingStopStates(states: Record<string, any>): Promise<void> {
-    if (!this.db.data) await this.init();
-    this.db.data!.trailingStopStates = states;
-    await this.db.write();
+    return this.queueWrite(async () => {
+      if (!this.db.data) await this.init();
+      this.db.data!.trailingStopStates = states;
+      await this.db.write();
+    });
   }
 
   async getBotTrailingStopState(botId: string): Promise<Record<number, any> | undefined> {
@@ -292,12 +321,14 @@ export class JsonStorage {
   }
 
   async saveBotTrailingStopState(botId: string, state: Record<number, any>): Promise<void> {
-    if (!this.db.data) await this.init();
-    if (!this.db.data!.trailingStopStates) {
-      this.db.data!.trailingStopStates = {};
-    }
-    this.db.data!.trailingStopStates[botId] = state;
-    await this.db.write();
+    return this.queueWrite(async () => {
+      if (!this.db.data) await this.init();
+      if (!this.db.data!.trailingStopStates) {
+        this.db.data!.trailingStopStates = {};
+      }
+      this.db.data!.trailingStopStates[botId] = state;
+      await this.db.write();
+    });
   }
 
   // General Config Methods
@@ -307,11 +338,13 @@ export class JsonStorage {
   }
 
   async setConfig(key: string, value: any): Promise<void> {
-    if (!this.db.data) await this.init();
-    if (!this.db.data!.config) {
-      this.db.data!.config = {};
-    }
-    this.db.data!.config[key] = value;
-    await this.db.write();
+    return this.queueWrite(async () => {
+      if (!this.db.data) await this.init();
+      if (!this.db.data!.config) {
+        this.db.data!.config = {};
+      }
+      this.db.data!.config[key] = value;
+      await this.db.write();
+    });
   }
 }
