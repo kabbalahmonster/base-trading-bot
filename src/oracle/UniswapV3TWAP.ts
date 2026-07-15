@@ -21,6 +21,7 @@ const FACTORY_ABI = parseAbi([
 const UNISWAP_V3_FACTORY: Record<Chain, string> = {
   base: '0x33128a8fC17869897dcE68Ed026d694621f6FDfD',
   ethereum: '0x1F98431c8aD98523631AE4a59f267346ea31F984',
+  robinhood: '', // Not yet available on Robinhood Chain
 };
 
 // Common fee tiers

@@ -1,7 +1,7 @@
 // src/wallet/WalletManager.ts
 
 import { generatePrivateKey, privateKeyToAccount, Account } from 'viem/accounts';
-import { createWalletClient, http, publicActions } from 'viem';
+import { createWalletClient, http, publicActions, defineChain } from 'viem';
 import { base, mainnet } from 'viem/chains';
 import CryptoJS from 'crypto-js';
 import { WalletData, WalletDictionary, Chain } from '../types/index.js';
@@ -9,10 +9,37 @@ import { WalletData, WalletDictionary, Chain } from '../types/index.js';
 const PBKDF2_ITERATIONS = 600000;
 const SALT_LENGTH = 32;
 
+// Robinhood Chain (Arbitrum Orbit L2) - Chain ID 4663
+// 0x Protocol announced support in July 2026
+const robinhood = defineChain({
+  id: 4663,
+  name: 'Robinhood Chain',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.robinhoodchain.com'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'Blockscout',
+      url: 'https://robinhoodchain.blockscout.com',
+      apiUrl: 'https://robinhoodchain.blockscout.com/api',
+    },
+  },
+  contracts: {
+    multicall3: {
+      address: '0xca11bde05977b3631167028862be2a173976ca11',
+      blockCreated: 1,
+    },
+  },
+});
+
 // Chain configuration
-const CHAIN_CONFIG: Record<Chain, typeof base | typeof mainnet> = {
+const CHAIN_CONFIG: Record<Chain, typeof base | typeof mainnet | typeof robinhood> = {
   base,
   ethereum: mainnet,
+  robinhood,
 };
 
 export class WalletManager {

@@ -16,6 +16,7 @@ const AGGREGATOR_ABI = parseAbi([
 // Sources: 
 // - Base: https://docs.chain.link/data-feeds/price-feeds/addresses?network=base
 // - Ethereum: https://docs.chain.link/data-feeds/price-feeds/addresses?network=ethereum
+// - Robinhood: Not yet available (new chain)
 export const CHAINLINK_FEEDS: Record<Chain, Record<string, string>> = {
   base: {
     // USD-denominated feeds
@@ -45,6 +46,10 @@ export const CHAINLINK_FEEDS: Record<Chain, Record<string, string>> = {
     'MKR': '0xec1D1B3b0443256cc3860e24a46F108e699484Aa',  // MKR/USD
     // CAD feed
     'CAD': '0x78733FaAf7E4610861262671Dd69C592Df1b5d0e', // CAD/USD
+  },
+  robinhood: {
+    // Robinhood Chain is new - Chainlink feeds not yet available
+    // Placeholder for future feeds
   },
 };
 
@@ -88,6 +93,10 @@ export const TOKEN_TO_FEED: Record<Chain, Record<string, string>> = {
     '0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2': 'MKR',
     // USDT
     '0xdAC17F958D2ee523a2206206994597C13D831ec7': 'USDT',
+  },
+  robinhood: {
+    // Robinhood Chain is new - token mappings not yet available
+    // Placeholder for future mappings
   },
 };
 

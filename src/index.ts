@@ -24,6 +24,7 @@ dotenv.config();
 
 const RPC_URL = process.env.BASE_RPC_URL || 'https://base.llamarpc.com';
 const ETH_RPC_URL = process.env.ETH_RPC_URL || 'https://eth.llamarpc.com';
+const ROBINHOOD_RPC_URL = process.env.ROBINHOOD_RPC_URL || 'https://rpc.robinhoodchain.com';
 const ZEROX_API_KEY = process.env.ZEROX_API_KEY;
 
 // Fallback RPC endpoints for resilience
@@ -42,29 +43,45 @@ const RPC_FALLBACKS: Record<Chain, string[]> = {
     'https://ethereum.publicnode.com',
     'https://1rpc.io/eth',
   ],
+  robinhood: [
+    'https://rpc.robinhoodchain.com',
+    'https://robinhoodchain.drpc.org',
+  ],
 };
 
 // Track working RPC per chain
 const currentRpcUrls: Record<Chain, string> = {
   base: RPC_URL,
   ethereum: ETH_RPC_URL,
+  robinhood: ROBINHOOD_RPC_URL,
 };
 
 /**
  * Get default RPC URL for a chain
  */
 function getDefaultRpc(chain: Chain): string {
-  return chain === 'base' ? RPC_URL : ETH_RPC_URL;
+  switch (chain) {
+    case 'base':
+      return RPC_URL;
+    case 'ethereum':
+      return ETH_RPC_URL;
+    case 'robinhood':
+      return ROBINHOOD_RPC_URL;
+    default:
+      return RPC_URL;
+  }
 }
 
 // Cache for working RPC to avoid repeated testing
 let workingRpcCache: Record<Chain, string | null> = {
   base: null,
   ethereum: null,
+  robinhood: null,
 };
 let lastRpcCheck: Record<Chain, number> = {
   base: 0,
   ethereum: 0,
+  robinhood: 0,
 };
 const RPC_CACHE_TTL = 60000; // 1 minute cache
 
@@ -92,10 +109,31 @@ async function getWorkingRpc(chain: Chain = 'base', forceCheck: boolean = false)
   for (let i = 0; i < rpcsToTry.length; i++) {
     const rpc = rpcsToTry[i];
     try {
-      const { createPublicClient, http } = await import('viem');
-      const chainConfig = chain === 'base' 
-        ? (await import('viem/chains')).base 
-        : (await import('viem/chains')).mainnet;
+      const { createPublicClient, http, defineChain } = await import('viem');
+      
+      // Get chain config based on selected chain
+      let chainConfig;
+      if (chain === 'base') {
+        chainConfig = (await import('viem/chains')).base;
+      } else if (chain === 'ethereum') {
+        chainConfig = (await import('viem/chains')).mainnet;
+      } else if (chain === 'robinhood') {
+        // Robinhood Chain (Arbitrum Orbit L2) - Chain ID 4663
+        chainConfig = defineChain({
+          id: 4663,
+          name: 'Robinhood Chain',
+          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+          rpcUrls: {
+            default: { http: [rpc] },
+          },
+          blockExplorers: {
+            default: {
+              name: 'Blockscout',
+              url: 'https://robinhoodchain.blockscout.com',
+            },
+          },
+        });
+      }
       
       const client = createPublicClient({
         chain: chainConfig,
@@ -136,7 +174,7 @@ async function getWorkingRpc(chain: Chain = 'base', forceCheck: boolean = false)
 }
 
 console.log(chalk.cyan.bold('\n🤖 Multi-Chain Grid Trading Bot\n'));
-console.log(chalk.dim('Supports: Base and Ethereum Mainnet\n'));
+console.log(chalk.dim('Supports: Base, Ethereum Mainnet, and Robinhood Chain\n'));
 
 async function main() {
   console.log(chalk.dim('  Loading storage...'));
@@ -464,6 +502,17 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
       default: true,
     },
     {
+      type: 'list',
+      name: 'chain',
+      message: 'Select blockchain:',
+      choices: [
+        { name: '🔵 Base (Ethereum L2)', value: 'base' },
+        { name: '🔷 Ethereum Mainnet', value: 'ethereum' },
+        { name: '🟢 Robinhood Chain (Arbitrum Orbit L2)', value: 'robinhood' },
+      ],
+      default: 'base',
+    },
+    {
       type: 'number',
       name: 'numPositions',
       message: 'Number of grid positions:',
@@ -629,7 +678,7 @@ async function createBot(storage: JsonStorage, walletManager: WalletManager) {
     name: answers.name,
     tokenAddress: answers.tokenAddress,
     tokenSymbol: answers.tokenSymbol,
-    chain: 'base',
+    chain: answers.chain || 'base',
     walletAddress: botWalletAddress,
     useMainWallet: answers.useMainWallet,
     config,
@@ -879,8 +928,9 @@ async function showStatus(heartbeatManager: HeartbeatManager, storage: JsonStora
           ? chalk.dim(`[${bot.config.buyAmount} ETH/buy]`)
           : chalk.dim('[auto-buy]');
       
+      const chainLabel = bot.chain === 'robinhood' ? chalk.green('[Robinhood]') : bot.chain === 'ethereum' ? chalk.blue('[Ethereum]') : chalk.cyan('[Base]');
       console.log(`  ${enabledStatus} ${bot.name}: ${botTypeLabel} ${runningStatus} ${buyAmountInfo} ${!bot.enabled ? chalk.red('[DISABLED]') : ''}`);
-      console.log(`     Token: ${bot.tokenSymbol} (${bot.tokenAddress.slice(0, 10)}...)`);
+      console.log(`     Token: ${bot.tokenSymbol} (${bot.tokenAddress.slice(0, 10)}...) ${chainLabel}`);
       console.log(`     Wallet: ${bot.walletAddress}`);
       
       // Fetch balances

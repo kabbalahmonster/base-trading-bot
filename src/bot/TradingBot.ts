@@ -5,7 +5,7 @@
  */
 
 import chalk from 'chalk';
-import { WalletClient, formatEther, parseEther, createPublicClient, http, erc20Abi } from 'viem';
+import { WalletClient, formatEther, parseEther, createPublicClient, http, erc20Abi, defineChain } from 'viem';
 import { base, mainnet } from 'viem/chains';
 import { BotInstance, Position, TradeResult, Chain } from '../types/index.js';
 import { WalletManager } from '../wallet/WalletManager.js';
@@ -16,13 +16,38 @@ import { PriceOracle, PriceData, ValidationResult } from '../oracle/index.js';
 import { PnLTracker } from '../analytics/PnLTracker.js';
 import { NotificationService } from '../notifications/NotificationService.js';
 
+// Robinhood Chain (Arbitrum Orbit L2) - Chain ID 4663
+const robinhood = defineChain({
+  id: 4663,
+  name: 'Robinhood Chain',
+  nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: {
+    default: {
+      http: ['https://rpc.robinhoodchain.com'],
+    },
+  },
+  blockExplorers: {
+    default: {
+      name: 'Blockscout',
+      url: 'https://robinhoodchain.blockscout.com',
+    },
+  },
+  contracts: {
+    multicall3: {
+      address: '0xca11bde05977b3631167028862be2a173976ca11',
+      blockCreated: 1,
+    },
+  },
+});
+
 /**
  * Chain configuration mapping
- * @constant {Record<Chain, typeof base | typeof mainnet>}
+ * @constant {Record<Chain, typeof base | typeof mainnet | typeof robinhood>}
  */
-const CHAIN_CONFIG: Record<Chain, typeof base | typeof mainnet> = {
+const CHAIN_CONFIG: Record<Chain, typeof base | typeof mainnet | typeof robinhood> = {
   base,
   ethereum: mainnet,
+  robinhood,
 };
 
 /**

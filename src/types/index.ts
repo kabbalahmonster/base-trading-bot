@@ -6,10 +6,10 @@
 
 /**
  * Supported blockchain networks
- * @typedef {('base' | 'ethereum')} Chain
- * @description 'base' - Ethereum L2 with low fees, 'ethereum' - Mainnet with highest liquidity
+ * @typedef {('base' | 'ethereum' | 'robinhood')} Chain
+ * @description 'base' - Ethereum L2 with low fees, 'ethereum' - Mainnet with highest liquidity, 'robinhood' - Robinhood Chain (Arbitrum Orbit L2)
  */
-export type Chain = 'base' | 'ethereum';
+export type Chain = 'base' | 'ethereum' | 'robinhood';
 
 /**
  * Telegram notification filtering levels

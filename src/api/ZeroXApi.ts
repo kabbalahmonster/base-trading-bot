@@ -18,6 +18,7 @@ const ZEROX_API_BASE = 'https://api.0x.org';
 const CHAIN_ID_MAP: Record<Chain, number> = {
   base: 8453,
   ethereum: 1,
+  robinhood: 4663,
 };
 
 /**
