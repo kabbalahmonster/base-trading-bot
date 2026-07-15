@@ -1628,51 +1628,99 @@ async function viewWalletBalances(storage: JsonStorage, walletManager: WalletMan
   const walletDictionary = await storage.getWalletDictionary();
 
   try {
-    const { createPublicClient, http, formatEther } = await import('viem');
-    const { base } = await import('viem/chains');
+    const { createPublicClient, http, formatEther, defineChain } = await import('viem');
+    const { base, mainnet } = await import('viem/chains');
 
-    const publicClient = createPublicClient({
-      chain: base,
-      transport: http(workingRpc),
+    // Define Robinhood Chain config
+    const robinhoodConfig = defineChain({
+      id: 4663,
+      name: 'Robinhood Chain',
+      nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+      rpcUrls: {
+        default: { http: [process.env.ROBINHOOD_RPC_URL || 'https://rpc.robinhoodchain.com'] },
+      },
+      blockExplorers: {
+        default: {
+          name: 'Blockscout',
+          url: 'https://robinhoodchain.blockscout.com',
+        },
+      },
     });
 
-    // Verify chain connection
-    try {
-      const blockNumber = await publicClient.getBlockNumber();
-      console.log(chalk.dim(`Connected to Base. Block: ${blockNumber}\n`));
-    } catch (e: any) {
-      console.log(chalk.red(`⚠ RPC Connection failed: ${e.message}`));
-      console.log(chalk.yellow(`Trying fallback RPCs...\n`));
-      
-      // Try to get another working RPC
-      const fallbackRpc = await getWorkingRpc();
-      if (fallbackRpc !== workingRpc) {
-        console.log(chalk.green(`✓ Using fallback RPC: ${fallbackRpc}\n`));
-        return viewWalletBalances(storage, walletManager); // Retry with new RPC
-      }
-      return;
-    }
-
-    // Check main wallet balance
-    const mainBalance = await publicClient.getBalance({
-      address: mainWallet.address as `0x${string}`,
-    });
+    // Check balances on all 3 chains
+    const chains: { name: string; config: any; color: any }[] = [
+      { name: 'Ethereum', config: mainnet, color: chalk.blue },
+      { name: 'Base', config: base, color: chalk.cyan },
+      { name: 'Robinhood', config: robinhoodConfig, color: chalk.green },
+    ];
 
     console.log(chalk.green('Main Wallet:'));
     console.log(`  Address: ${mainWallet.address}`);
-    console.log(`  Balance: ${formatEther(mainBalance)} ETH`);
-    console.log(chalk.dim(`  Raw: ${mainBalance.toString()} wei\n`));
+    
+    for (const { name, config, color } of chains) {
+      try {
+        const rpcUrl = name === 'Ethereum' ? process.env.ETH_RPC_URL || 'https://eth.llamarpc.com' :
+                       name === 'Base' ? process.env.BASE_RPC_URL || 'https://base.llamarpc.com' :
+                       process.env.ROBINHOOD_RPC_URL || 'https://rpc.robinhoodchain.com';
+        
+        const client = createPublicClient({
+          chain: config,
+          transport: http(rpcUrl),
+        });
+        
+        const balance = await client.getBalance({
+          address: mainWallet.address as `0x${string}`,
+        });
+        
+        const balanceStr = formatEther(balance);
+        const hasBalance = balance > BigInt(0);
+        const displayStr = hasBalance ? color.bold(`${balanceStr} ETH`) : `${balanceStr} ETH`;
+        const marker = hasBalance ? color(' ✓') : '';
+        
+        console.log(`  ${name.padEnd(10)}: ${displayStr}${marker}`);
+      } catch (e) {
+        console.log(`  ${name.padEnd(10)}: ${chalk.red('Error checking balance')}`);
+      }
+    }
+    console.log();
 
-    // Check bot wallets
+    // Check bot wallets with chain labels
     if (Object.keys(walletDictionary).length > 0) {
+      // Get bot configurations to know which chain each bot is on
+      const bots = await storage.getAllBots();
+      const botChainMap = new Map<string, Chain>();
+      for (const bot of bots) {
+        botChainMap.set(bot.walletAddress, bot.chain);
+      }
+      
       console.log(chalk.cyan('Bot Wallets:'));
       for (const [id, wallet] of Object.entries(walletDictionary)) {
-        const balance = await publicClient.getBalance({
-          address: wallet.address as `0x${string}`,
-        });
-        console.log(`\n  ${id.slice(0, 16)}...:`);
+        const botChain = botChainMap.get(wallet.address) || 'base';
+        const chainColor = botChain === 'robinhood' ? chalk.green : botChain === 'ethereum' ? chalk.blue : chalk.cyan;
+        
+        console.log(`\n  ${id.slice(0, 16)}... ${chainColor(`[${botChain}]`)}:`);
         console.log(`    Address: ${wallet.address}`);
-        console.log(`    Balance: ${formatEther(balance)} ETH`);
+        
+        // Check balance on the bot's configured chain
+        try {
+          const config = botChain === 'robinhood' ? robinhoodConfig : botChain === 'ethereum' ? mainnet : base;
+          const rpcUrl = botChain === 'ethereum' ? process.env.ETH_RPC_URL || 'https://eth.llamarpc.com' :
+                         botChain === 'base' ? process.env.BASE_RPC_URL || 'https://base.llamarpc.com' :
+                         process.env.ROBINHOOD_RPC_URL || 'https://rpc.robinhoodchain.com';
+          
+          const client = createPublicClient({
+            chain: config,
+            transport: http(rpcUrl),
+          });
+          
+          const balance = await client.getBalance({
+            address: wallet.address as `0x${string}`,
+          });
+          
+          console.log(`    Balance: ${formatEther(balance)} ETH`);
+        } catch (e) {
+          console.log(`    Balance: ${chalk.red('Error')}`);
+        }
       }
     } else {
       console.log(chalk.dim('No bot wallets.\n'));
