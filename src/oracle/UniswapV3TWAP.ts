@@ -34,14 +34,14 @@ export const DEFAULT_TWAP_SECONDS = 30 * 60;
 const WETH_ADDRESS: Record<Chain, string> = {
   base: '0x4200000000000000000000000000000000000006',
   ethereum: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-  robinhood: '', // TODO: Add WETH address when available
+  robinhood: '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73', // Official WETH on Robinhood Chain
 };
 
 // USDC address by chain (for health checks)
 const USDC_ADDRESS: Record<Chain, string> = {
   base: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
   ethereum: '0xA0b86a33E6441E6C7D3D4B4f6b8e8F5c4D3e2B1A',
-  robinhood: '', // TODO: Add USDC address when available
+  robinhood: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', // USDG - Robinhood's stablecoin (USDC not yet deployed)
 };
 
 export interface TWAPConfig {
