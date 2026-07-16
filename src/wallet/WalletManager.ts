@@ -218,7 +218,7 @@ export class WalletManager {
   /**
    * Get wallet client for any wallet with specified chain
    */
-  getWalletClient(walletId: string, rpcUrl: string, chain: Chain = 'base') {
+  getWalletClient(walletId: string, rpcUrl: string, chain: Chain = 'base'): any {
     const account = this.getAccount(walletId);
     const chainConfig = CHAIN_CONFIG[chain];
     return createWalletClient({
@@ -231,7 +231,7 @@ export class WalletManager {
   /**
    * Get wallet client for primary wallet (backward compatibility)
    */
-  getMainWalletClient(rpcUrl: string, chain: Chain = 'base') {
+  getMainWalletClient(rpcUrl: string, chain: Chain = 'base'): any {
     const account = this.getMainAccount();
     const chainConfig = CHAIN_CONFIG[chain];
     return createWalletClient({
@@ -244,7 +244,7 @@ export class WalletManager {
   /**
    * Get wallet client for bot wallet with chain support
    */
-  getBotWalletClient(botId: string, rpcUrl: string, chain: Chain = 'base') {
+  getBotWalletClient(botId: string, rpcUrl: string, chain: Chain = 'base'): any {
     return this.getWalletClient(botId, rpcUrl, chain);
   }
 
