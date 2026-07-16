@@ -67,6 +67,72 @@ cp .env.example .env
 nano .env
 ```
 
+---
+
+## 🌐 Chain Selection
+
+The bot supports trading on multiple blockchains. Choose your chain by copying the appropriate configuration file:
+
+```bash
+# Robinhood Chain (default, recommended for beginners)
+# - Chain ID: 4663
+# - Very low gas costs (~$0.001 per tx)
+# - Best for testing and small positions
+cp .env.robinhood .env
+
+# Base Chain (recommended for production)
+# - Chain ID: 8453
+# - Low gas costs (~$0.01-0.10 per tx)
+# - Good liquidity, active development
+cp .env.base .env
+
+# Ethereum Mainnet (for large positions)
+# - Chain ID: 1
+# - HIGH gas costs ($5-50+ per tx)
+# - Highest liquidity, most established
+cp .env.mainnet .env
+```
+
+### Using the Helper Script
+
+You can also use the provided helper script to switch chains:
+
+```bash
+# Switch to Robinhood Chain
+./scripts/switch-chain.sh robinhood
+
+# Switch to Base Chain
+./scripts/switch-chain.sh base
+
+# Switch to Ethereum Mainnet
+./scripts/switch-chain.sh mainnet
+```
+
+### Configuration Steps
+
+After copying the chain config file:
+
+1. **Edit `.env`** and add your:
+   - `PRIVATE_KEY` - Your wallet's private key
+   - `ZEROX_API_KEY` - Optional but recommended for higher rate limits
+
+2. **Review the settings** - Each chain config has optimized defaults:
+   - **Gas Reserve** - Adjusted for chain's gas costs
+   - **Grid Size** - Larger for chains with higher gas
+   - **Check Intervals** - Tuned for block times
+
+3. **Start the bot**: `npm run build && npm start`
+
+### Chain Comparison
+
+| Chain | Chain ID | Gas Cost | Best For |
+|-------|----------|----------|----------|
+| Robinhood | 4663 | ~$0.001/tx | Testing, small positions, high frequency |
+| Base | 8453 | ~$0.01-0.10/tx | Production, medium positions, good liquidity |
+| Ethereum | 1 | $5-50+/tx | Large positions, highest liquidity |
+
+---
+
 ### ⚠️ Important: RPC Configuration
 
 **For production use, use a private RPC endpoint.** Public RPCs (like `mainnet.base.org`) have strict rate limits (429 errors) which can cause:
